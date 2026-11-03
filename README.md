@@ -47,8 +47,63 @@ Question text supports bold, italic, underline, text color, bullet lists, and cl
 
 ## Question images and editing
 
-Question forms now use a dedicated composer: formatted question text, four answer choices with inline correct-answer selection, optional image attachments, and scoring/time settings. Each question and answer can have an uploaded image. JPEG, PNG, WebP and GIF files up to 5 MB can be selected or dropped, previewed, replaced or removed. Saving waits for uploads to complete.
+Question forms now use a dedicated composer: formatted question text, four answer choices with checkboxes to mark one or more correct answers, optional image attachments, and scoring/time settings. Each question and answer can have an uploaded image. JPEG, PNG, WebP and GIF files up to 5 MB can be selected or dropped, previewed, replaced or removed. Saving waits for uploads to complete.
 
 Real sessions upload through `POST /questions/images` on the configured backend. The returned public URL is saved with the question; binary files are not included in the question JSON. Demo sessions keep their attachments in memory and never upload them to the live API.
 
 The backend stores files in `UPLOAD_DIR/questions` (default `./uploads/questions`). Set `PUBLIC_API_URL` to the public API origin in production. See [API_DOCUMENTATION.md](../docs/API_DOCUMENTATION.md) for upload requests and server storage configuration.
+
+## Multiple correct answers
+
+A question can have several correct answers. They are sent in the existing `correctAnswer` field as a sorted, comma-separated string (`"1,3"`); a single answer is still `"2"`. Imports accept `1;3`, `1|3` or a quoted `"1,3"` in CSV. The backend and player app must accept and score this format.
+
+## Removing questions from a set
+
+In the Question Bank, filter by a question set, tick questions, and choose **Remove from set**. Each question is sent to `PUT /questions/:id` with its current data and `labelId: null`. The question is not deleted; it stays in the bank without a set and can be assigned again by editing it. The backend must accept a null `labelId` on update.
+
+## Live quiz question selection
+
+In Question Sets, the Questions view has an **Include** checkbox per question. Only included questions are meant to appear when a championship using the set goes live. Changes are kept across pages until **Save selection** (or **Discard changes**); switching sets, tabs or leaving the page warns about unsaved changes. At least one question in the set must stay included.
+
+The choice is stored per question as `includeInLive` (sent with the question's current data to `PUT /questions/:id`); question content is not changed and nothing is deleted. Questions without the flag count as included. The championship wizard counts only included questions using `GET /questions?labelId=…&includeInLive=true`. The backend must store the flag, support that filter, and draw live-quiz questions only from included ones; the player app shows whatever the backend serves.
+
+## Admin championship management and moderation
+
+The Championships table shows **S.No.**, **Championship ID**, name, **No. of questions**, **Questions to display**, start and end dates, status, and icon actions (view, edit, activate/deactivate, block/unblock, leaderboard). It can be filtered by status (Active, Inactive, Blocked, Completed), searched, sorted and paged. Total questions comes from `total_questions` on each row (every question in the linked sets). Questions to display is the per-game number capped by `eligible_questions` (included and not blocked); a warning shows when there are not enough.
+
+Admins load every championship from `GET /admin/championships`, including inactive and blocked ones. They can rename (`PUT /admin/championships/:id` with `{ champName }`), activate/deactivate (`PATCH /admin/championships/:id/status` with `{ status: 0 | 1 }`) and block/unblock (`PATCH /admin/championships/:id/block` with `{ blocked }`) any championship. If the service returns 404 for the list, the panel falls back to the active feed and hides these controls.
+
+In the Question Bank, admins can block/unblock questions (`PATCH /admin/questions/:id/block` with `{ blocked }`). Blocked items carry `is_blocked` and are marked with a red **Blocked** badge. The backend must keep blocked questions out of live quizzes and out of `includeInLive=true` results, keep blocked championships out of public feeds and refuse to open them or accept participation, and refuse teacher activation while a championship is blocked.
+
+Status changes, blocking, question deletion and teacher approval or suspension ask for confirmation in a dialog first.
+
+## Identifiers
+
+Tables show readable IDs: championships `CH-00012`, question sets `QS-0042`, teachers `TCH-0103` and participants `USR-10001`. If the API sends `champ_code`, `label_code`, `teacher_code` or `user_code`, that value is shown instead. Otherwise the code is built from the numeric ID, so it is always unique. Searches accept either form (`TCH-0103`, `tch-103` or `103`).
+
+## Question sets
+
+The Question Sets list shows only S.No., the set name and a View action. View opens `/labels/:id`, which shows the set ID, teacher ID and name, bank, question count, and a table of associated championships (from `label_ids` on championship rows). The questions, add-question and import tabs that used to be on the list page are now on this page. `/labels/:id?tab=import` opens the import tab. `/questions/import` now shows the list and asks you to choose the set to import into. Teacher and bank details come from `teacher_id`, `teacher_name` and `bank_name` on `GET /questions/labels` rows.
+
+## Question Bank search
+
+The Question Bank uses search and filters instead of a dropdown. Results load one page at a time from the server, and typing waits 350 ms before a request is sent. Parameters for `GET /questions`:
+
+| Parameter | Meaning |
+|---|---|
+| `q`, `field` | Partial, case-insensitive keyword. `field` is `all` (default), `bank`, `teacher`, `teacherId` or `set` |
+| `search` | Words in the question text |
+| `teacherId`, `labelId` | Exact teacher or question set |
+| `liveState` | `included`, `excluded` or `blocked` |
+| `questionId` | One question (used by the editor) |
+| `page`, `limit` | Pagination (10, 25, 50 or 100 rows) |
+
+Question rows should include `bank_name`, `teacher_id` and `teacher_name`. The Teacher and Question set pickers call `GET /admin/teachers?search=&limit=10` and `GET /questions/labels?search=&limit=10`. If the server ignores these parameters, the panel filters the response and keeps only the first 10 matches.
+
+## Analytics and leaderboards
+
+`/analytics` is a dashboard with KPI cards, accuracy and correct/incorrect charts, a participation trend and a detailed table. It can be filtered by championship, category, question set, teacher and date range. Data comes from `GET /admin/analytics/performance` (teachers: `/teacher/analytics/performance`). The endpoint accepts `championshipId`, `categoryId`, `labelId`, `teacherId`, `from` and `to`, and returns `{ rows, daily }`. Each row covers one championship and question set, with participant, attempt, correct, incorrect, average score, total marks, average time and completion rate figures. If the endpoint is missing, the page says so.
+
+`/leaderboard/:id` (and the older `/analytics/:id`) ranks participants by higher marks, then higher accuracy, then shorter time. Participants who tie on all three share a rank. Ranks are calculated over the whole championship, so filters never renumber anyone. The page reads `GET /championships/:id/leaderboard`. It accepts the older fields (`userName`, `score`, `correctCount`, `timeTaken`) or detailed attempt rows (`attempt_id`, `user_id`, `label_id`, `teacher_id`, `attempted`, `correct`, `incorrect`, `marks`, `total_marks`, `time_taken_sec`, `completed_at`, `completed`). A completed attempt passes at 40% of total marks. View Details opens a drawer that loads question-by-question answers from `GET /championships/:id/attempts/:attemptId` (`questions: [{ question_text, submitted_answer, correct_answer, outcome, marks, time_taken_sec }]`).
+
+Demo mode generates this data from a fixed seed: about 37 teachers (some sharing a name), more than 100 question sets in named banks, about 2,600 questions, 14 championships and about 1,500 attempts.

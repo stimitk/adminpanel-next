@@ -143,14 +143,24 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
             <span>{portal.title}</span>
           </div>
-          <Link className="profile-link" href="/account">
-            <span className="avatar">
-              {(profile?.name || profile?.username || "K")
-                .slice(0, 1)
-                .toUpperCase()}
-            </span>
-            <span>{profile?.name || profile?.username || "Account"}</span>
-          </Link>
+          <div className="header-account">
+            <Link className="profile-link" href="/account">
+              <span className="avatar">
+                {(profile?.name || profile?.username || "K")
+                  .slice(0, 1)
+                  .toUpperCase()}
+              </span>
+              <span>{profile?.name || profile?.username || "Account"}</span>
+            </Link>
+            <button
+              type="button"
+              className="small secondary header-logout"
+              onClick={logout}
+            >
+              <Icon name="logout" />
+              <span>Logout</span>
+            </button>
+          </div>
         </header>
         <main id="main-content" className="portal-content">
           {demoEnabled && profile?.email?.endsWith("@kgamify.test") && (

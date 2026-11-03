@@ -1,5 +1,6 @@
 import { plainRichText, sanitizeRichText } from "./rich-text";
 import { asId } from "./api";
+import { formatCorrectAnswers, parseCorrectAnswers } from "./answers";
 import type { Row } from "./types";
 export const csvTemplate =
   'labelId,questionText,option1Text,option2Text,option3Text,option4Text,correctAnswer,expectedTimeSeconds,totalCoins\n,"Which gas is released during photosynthesis?",Oxygen,Carbon Dioxide,Nitrogen,Hydrogen,1,20,10\n';
@@ -81,10 +82,12 @@ export function validateQuestions(rows: Row[], fallbackLabel: string): Row[] {
         result[key] = sanitizeRichText(value);
       } else result[key] = value;
     }
-    if (!["1", "2", "3", "4"].includes(String(result.correctAnswer)))
+    const answers = parseCorrectAnswers(result.correctAnswer);
+    if (!answers.length)
       throw new Error(
-        `Question ${i + 1}: correctAnswer must be 1, 2, 3, or 4.`,
+        `Question ${i + 1}: correctAnswer must be 1, 2, 3, or 4, or several separated by commas or semicolons (for example "1;3").`,
       );
+    result.correctAnswer = formatCorrectAnswers(answers);
     const label = String(raw.labelId || fallbackLabel).trim();
     if (!label)
       throw new Error(

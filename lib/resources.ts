@@ -140,6 +140,7 @@ export const resources: Record<string, Resource> = {
     title: "Teachers",
     endpoint: "/admin/teachers",
     columns: [
+      ["teacher_code", "Teacher ID"],
       ["teacher_name", "Name"],
       ["username", "Username"],
       ["email", "Email"],

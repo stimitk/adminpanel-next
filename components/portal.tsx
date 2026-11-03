@@ -52,11 +52,18 @@ const ChampionshipDetails = dynamic(
   }
 );
 
-const ChampionshipAnalytics = dynamic(
+const AnalyticsDashboard = dynamic(
   () =>
-    import("./championships").then((m) => ({
-      default: m.ChampionshipAnalytics,
+    import("./analytics").then((m) => ({
+      default: m.AnalyticsDashboard,
     })),
+  {
+    loading: () => <SkeletonPage withMetrics cards={2} />,
+  }
+);
+
+const Leaderboard = dynamic(
+  () => import("./leaderboard").then((m) => ({ default: m.Leaderboard })),
   {
     loading: () => <SkeletonPage withMetrics cards={1} />,
   }
@@ -80,6 +87,14 @@ const QuestionSets = dynamic(
   () => import("./question-sets").then((m) => ({ default: m.QuestionSets })),
   {
     loading: () => <SkeletonPage cards={1} />,
+  }
+);
+
+const QuestionSetDetails = dynamic(
+  () =>
+    import("./question-sets").then((m) => ({ default: m.QuestionSetDetails })),
+  {
+    loading: () => <SkeletonPage cards={2} />,
   }
 );
 
@@ -262,14 +277,18 @@ function Screen({ route }: { route: string }) {
   if (unavailable[route]) return <Unavailable name={route} />;
   if (section === "labels" && (!id || id === "new"))
     return <QuestionSets key={route} create={id === "new"} />;
+  if (section === "labels" && id) return <QuestionSetDetails key={id} id={id} />;
   if (section === "championships") {
     if (id === "new") return <ChampionshipEditor />;
     if (id && action === "edit") return <ChampionshipEditor key={id} id={id} />;
     if (id) return <ChampionshipDetails key={id} id={id} />;
     return <Championships />;
   }
+  // /analytics/:id is the older leaderboard URL; it keeps working.
   if (section === "analytics")
-    return <ChampionshipAnalytics key={id || "list"} id={id} />;
+    return id ? <Leaderboard key={id} championshipId={id} /> : <AnalyticsDashboard />;
+  if (section === "leaderboard")
+    return <Leaderboard key={id || "first"} championshipId={id} />;
   if (section === "questions") {
     if (id === "new") return <QuestionEditor />;
     if (id === "import") return <QuestionSets importFirst />;

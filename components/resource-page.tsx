@@ -4,6 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { api, errorText, rowsOf } from "../lib/api";
 import { resources } from "../lib/resources";
+import { teacherCode } from "../lib/codes";
 import { portal } from "../lib/portal";
 import type { Row } from "../lib/types";
 import {
@@ -16,6 +17,9 @@ import {
   useLoad,
   Card,
   Button,
+  IconActions,
+  IconButton,
+  useConfirm,
 } from "./ui";
 
 // Dynamically import heavy AdvertisementForm with cropper and canvas routines
@@ -42,6 +46,7 @@ export function ResourcePage({
   const [mutationError, setMutationError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<Row | null>(null);
+  const { confirm, dialog } = useConfirm();
   const { data, loading, error } = useLoad<unknown>(
     create ? null : resource.endpoint,
     revision,
@@ -49,6 +54,23 @@ export function ResourcePage({
   const canCreate =
     !!resource.fields && !(portal.kind === "teacher" && name === "categories");
 
+  async function setTeacherStatus(row: Row, status: 1 | 2) {
+    const id = String(row.teacher_id);
+    const name = String(row.teacher_name || "this teacher");
+    if (
+      !(await confirm({
+        title: status === 1 ? "Approve teacher?" : "Suspend teacher?",
+        message:
+          status === 1
+            ? `${name} will be able to sign in and create question sets and championships.`
+            : `${name} will not be able to sign in until approved again. Their content is kept.`,
+        confirmLabel: status === 1 ? "Approve" : "Suspend",
+        isDangerous: status === 2,
+      }))
+    )
+      return;
+    return change(`/admin/teachers/${encodeURIComponent(id)}/status`, { status }, id);
+  }
   async function change(path: string, body: unknown, key: string) {
     setMutationError("");
     setBusy(key);
@@ -153,7 +175,13 @@ export function ResourcePage({
           <Retry error={error} onRetry={() => setRevision((v) => v + 1)} />
         ) : (
           <DataTable
-            rows={rowsOf(data)}
+            rows={
+              name === "teachers"
+                ? rowsOf(data).map((row) => ({ ...row, teacher_code: teacherCode(row) }))
+                : rowsOf(data)
+            }
+            serial
+            sortable={resource.columns.map(([key]) => key)}
             columns={resource.columns}
             statusKind={name === "teachers" ? "teacher" : "default"}
             actions={
@@ -161,53 +189,43 @@ export function ResourcePage({
                 ? (row) => {
                     const id = String(row.teacher_id);
                     return (
-                      <>
-                        <Button
-                          size="sm"
-                          disabled={busy === id || row.status === 1}
+                      <IconActions>
+                        <IconButton
+                          icon="approve"
+                          label="Approve teacher"
+                          tone="success"
                           loading={busy === id}
-                          onClick={() =>
-                            change(
-                              `/admin/teachers/${encodeURIComponent(id)}/status`,
-                              { status: 1 },
-                              id,
-                            )
-                          }
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
+                          disabled={busy === id || row.status === 1}
+                          disabledReason="Already approved"
+                          onClick={() => setTeacherStatus(row, 1)}
+                        />
+                        <IconButton
+                          icon="block"
+                          label="Suspend teacher"
+                          tone="danger"
                           disabled={busy === id || row.status === 2}
-                          onClick={() =>
-                            change(
-                              `/admin/teachers/${encodeURIComponent(id)}/status`,
-                              { status: 2 },
-                              id,
-                            )
-                          }
-                        >
-                          Suspend
-                        </Button>
-                      </>
+                          disabledReason="Already suspended"
+                          onClick={() => setTeacherStatus(row, 2)}
+                        />
+                      </IconActions>
                     );
                   }
                 : name === "coins"
                   ? (row) => (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setEditing(row)}
-                      >
-                        Edit
-                      </Button>
+                      <IconActions>
+                        <IconButton
+                          icon="edit"
+                          label="Edit coin value"
+                          onClick={() => setEditing(row)}
+                        />
+                      </IconActions>
                     )
                   : undefined
             }
           />
         )}
       </Card>
+      {dialog}
     </>
   );
 }

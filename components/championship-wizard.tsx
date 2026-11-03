@@ -7,6 +7,7 @@ import {
   questionFields,
   resources,
 } from "../lib/resources";
+import { matchesSearch } from "../lib/search";
 import type { Row } from "../lib/types";
 import { Form, Heading, Loading, Notice, Retry, useLoad } from "./ui";
 
@@ -24,6 +25,8 @@ export function ChampionshipWizard() {
     endTime: "18:00",
   });
   const [selected, setSelected] = useState<string[]>([]);
+  const [setQuery, setSetQuery] = useState("");
+  const [selectedOnly, setSelectedOnly] = useState(false);
   const [revision, setRevision] = useState(0);
   const [editor, setEditor] = useState<"question" | "set" | "import" | null>(
     null,
@@ -58,7 +61,12 @@ export function ChampionshipWizard() {
     Promise.all(
       selectedKey.split(",").map(async (id) => {
         const result = await api<{ total: number }>(
-          `/questions/?${new URLSearchParams({ labelId: id, limit: "1", page: "1" })}`,
+          `/questions/?${new URLSearchParams({
+            labelId: id,
+            includeInLive: "true",
+            limit: "1",
+            page: "1",
+          })}`,
           { signal: controller.signal },
         );
         return [id, Number(result.total)] as const;
@@ -76,6 +84,11 @@ export function ChampionshipWizard() {
     return () => controller.abort();
   }, [selectedKey, revision]);
   const sets = rowsOf(labels.data);
+  const visibleSets = sets.filter(
+    (row) =>
+      matchesSearch(row.label_name, setQuery) &&
+      (!selectedOnly || selected.includes(String(row.label_id))),
+  );
   const total = selected.reduce((sum, id) => sum + (counts[id] || 0), 0);
   const ready =
     selected.length > 0 &&
@@ -376,7 +389,48 @@ export function ChampionshipWizard() {
             ) : sets.length ? (
               <fieldset className="wizard-question-sets">
                 <legend>Question sets</legend>
-                {sets.map((row) => {
+                <div className="wizard-set-filter">
+                  <label>
+                    <span className="sr-only">Search question sets</span>
+                    <input
+                      type="search"
+                      value={setQuery}
+                      onChange={(event) => setSetQuery(event.target.value)}
+                      placeholder="Search your question sets"
+                      maxLength={100}
+                    />
+                  </label>
+                  <label className="wizard-set-filter-toggle">
+                    <input
+                      type="checkbox"
+                      checked={selectedOnly}
+                      onChange={(event) =>
+                        setSelectedOnly(event.target.checked)
+                      }
+                    />
+                    <span>Selected only</span>
+                  </label>
+                  <span role="status">
+                    {visibleSets.length} of {sets.length} shown ·{" "}
+                    {selected.length} selected
+                  </span>
+                </div>
+                {!visibleSets.length && (
+                  <p className="muted wizard-set-empty">
+                    No question sets match your filter.{" "}
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => {
+                        setSetQuery("");
+                        setSelectedOnly(false);
+                      }}
+                    >
+                      Clear filter
+                    </button>
+                  </p>
+                )}
+                {visibleSets.map((row) => {
                   const id = String(row.label_id);
                   return (
                     <label className="wizard-set-option" key={id}>
@@ -396,7 +450,7 @@ export function ChampionshipWizard() {
                         <small>
                           {countsLoading
                             ? "Counting…"
-                            : `${counts[id] || 0} questions`}
+                            : `${counts[id] || 0} live questions`}
                         </small>
                       )}
                     </label>
@@ -418,12 +472,12 @@ export function ChampionshipWizard() {
             <p className="wizard-question-summary" role="status">
               {countsLoading
                 ? "Checking available questions…"
-                : `${total} questions available · ${String(setup.noOfQuestions)} needed per game`}
+                : `${total} questions included for live quizzes · ${String(setup.noOfQuestions)} needed per game`}
             </p>
             {!ready && selected.length > 0 && !countsLoading && !countError && (
               <p className="muted">
                 Add at least {Math.max(0, Number(setup.noOfQuestions) - total)}{" "}
-                more questions, or select another set.
+                more questions, include more of them in Question Sets, or select another set.
               </p>
             )}
             <div className="wizard-actions">

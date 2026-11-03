@@ -8,6 +8,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { api, asId, errorText, rowsOf } from "../lib/api";
+import { formatCorrectAnswers, parseCorrectAnswers } from "../lib/answers";
 import { plainRichText, sanitizeRichText } from "../lib/rich-text";
 import type { Field, Row } from "../lib/types";
 import { RichTextEditor } from "./rich-text-editor";
@@ -35,7 +36,9 @@ export function QuestionComposer({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [blocked, setBlocked] = useState<Record<string, boolean>>({});
-  const [correct, setCorrect] = useState(String(initial.correctAnswer || ""));
+  const [correct, setCorrect] = useState<string[]>(() =>
+    parseCorrectAnswers(initial.correctAnswer),
+  );
   const has = (name: string) => fields.some((field) => field.name === name);
   const chooseSet = has("labelId");
   const [labels, setLabels] = useState<Row[]>([]);
@@ -86,10 +89,11 @@ export function QuestionComposer({
       return;
     }
     values.questionText = sanitizeRichText(String(values.questionText));
-    if (!["1", "2", "3", "4"].includes(String(values.correctAnswer))) {
-      setError("Select the correct answer.");
+    if (!correct.length) {
+      setError("Select at least one correct answer.");
       return;
     }
+    values.correctAnswer = formatCorrectAnswers(correct);
     setBusy(true);
     try {
       await onSubmit(values);
@@ -191,33 +195,41 @@ export function QuestionComposer({
         >
           <div className="composer-section-heading">
             <h3 id={`${formId}-answers-title`}>Answer choices</h3>
-            <span>Select one correct answer</span>
+            <span>Select one or more correct answers</span>
           </div>
           <div className="composer-answers">
             {[1, 2, 3, 4].map((number) => {
               const text = `option${number}Text`,
                 image = `option${number}Img`;
               const letter = String.fromCharCode(64 + number);
+              const isCorrect = correct.includes(String(number));
               return (
                 <div
-                  className={`composer-answer ${correct === String(number) ? "is-correct" : ""}`}
+                  className={`composer-answer ${isCorrect ? "is-correct" : ""}`}
                   key={number}
                 >
                   <div className="composer-answer-heading">
                     <label className="correct-answer-choice">
                       <input
-                        type="radio"
-                        name="correctAnswer"
+                        type="checkbox"
                         value={number}
-                        checked={correct === String(number)}
-                        onChange={() => setCorrect(String(number))}
-                        required
+                        checked={isCorrect}
+                        onChange={(event) =>
+                          setCorrect((previous) =>
+                            event.target.checked
+                              ? formatCorrectAnswers([
+                                  ...previous,
+                                  String(number),
+                                ]).split(",")
+                              : previous.filter(
+                                  (value) => value !== String(number),
+                                ),
+                          )
+                        }
                       />
                       <span>Option {letter}</span>
                       <span className="correct-answer-caption">
-                        {correct === String(number)
-                          ? "Correct answer"
-                          : "Mark correct"}
+                        {isCorrect ? "Correct answer" : "Mark correct"}
                       </span>
                     </label>
                   </div>

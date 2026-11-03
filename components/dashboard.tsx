@@ -16,6 +16,8 @@ import {
   MetricCard,
   DeltaTrend,
   SegmentedControl,
+  IconActions,
+  IconButton,
 } from "./ui";
 import { Icon } from "./shell";
 
@@ -377,13 +379,18 @@ export function Dashboard() {
               ["status", "Status"],
             ]}
             actions={(row: Row) => (
-              <Button
-                size="sm"
-                variant="secondary"
-                href={`/championships/${encodeURIComponent(String(row.champ_id))}`}
-              >
-                View
-              </Button>
+              <IconActions>
+                <IconButton
+                  icon="view"
+                  label="View championship details"
+                  href={`/championships/${encodeURIComponent(String(row.champ_id))}`}
+                />
+                <IconButton
+                  icon="leaderboard"
+                  label="View leaderboard"
+                  href={`/leaderboard/${encodeURIComponent(String(row.champ_id))}`}
+                />
+              </IconActions>
             )}
           />
         )}

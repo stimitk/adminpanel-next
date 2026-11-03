@@ -1,9 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { api, errorText, rowsOf } from "../lib/api";
+import { api, ApiError, errorText, rowsOf } from "../lib/api";
+import { championshipQuestionCounts } from "../lib/championships";
+import { championshipCode } from "../lib/codes";
+import { isBlocked } from "../lib/questions";
 import { championshipFields } from "../lib/resources";
 import { portal } from "../lib/portal";
 import type { Row } from "../lib/types";
@@ -19,6 +22,12 @@ import {
   Card,
   Button,
   StatusBadge,
+  Badge,
+  Modal,
+  ACTIONS_COLUMN,
+  IconActions,
+  IconButton,
+  useConfirm,
 } from "./ui";
 
 const ChampionshipWizard = dynamic(
@@ -29,26 +38,108 @@ const ChampionshipWizard = dynamic(
   { loading: () => <Loading text="Loading championship wizard…" />, ssr: false }
 );
 
+// Admins manage every championship (inactive and blocked too) through
+// /admin/championships. Older APIs without it fall back to the active feed.
+export function useChampionshipList(revision: number) {
+  const [state, setState] = useState<{
+    rows: Row[];
+    loading: boolean;
+    error: string;
+    limited: boolean;
+  }>({ rows: [], loading: true, error: "", limited: false });
+  useEffect(() => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    setState((previous) => ({ ...previous, loading: true, error: "" }));
+    (async () => {
+      if (portal.kind === "teacher")
+        return { rows: rowsOf(await api("/teacher/championships", { signal })), limited: false };
+      try {
+        return { rows: rowsOf(await api("/admin/championships", { signal })), limited: false };
+      } catch (error) {
+        if (!(error instanceof ApiError && error.status === 404)) throw error;
+        return { rows: rowsOf(await api("/championships/feed", { signal })), limited: true };
+      }
+    })()
+      .then((result) => {
+        if (!signal.aborted) setState({ ...result, loading: false, error: "" });
+      })
+      .catch((error) => {
+        if (!signal.aborted)
+          setState({ rows: [], loading: false, error: errorText(error), limited: false });
+      });
+    return () => controller.abort();
+  }, [revision]);
+  return state;
+}
+
+// The schedule has ended (end date before today).
+export function isCompleted(row: Row) {
+  const end = typeof row.end_date === "string" ? row.end_date.slice(0, 10) : "";
+  return !!end && end < new Date().toISOString().slice(0, 10);
+}
+function ChampionshipStatus({ row }: { row: Row }) {
+  return (
+    <div className="status-stack">
+      <StatusBadge status={row.status} />
+      {isBlocked(row) && <Badge variant="suspended">Blocked</Badge>}
+      {isCompleted(row) && <Badge variant="info">Completed</Badge>}
+    </div>
+  );
+}
+const STATUS_FILTERS: [string, string, (row: Row) => boolean][] = [
+  ["", "All statuses", () => true],
+  ["active", "Active", (r) => Number(r.status) === 1 && !isBlocked(r)],
+  ["inactive", "Inactive", (r) => Number(r.status) !== 1],
+  ["blocked", "Blocked", isBlocked],
+  ["completed", "Completed", isCompleted],
+];
+
+function QuestionCount({ row, kind }: { row: Row; kind: "total" | "display" }) {
+  const counts = championshipQuestionCounts(row);
+  if (kind === "total") return <>{counts.total ?? "—"}</>;
+  if (counts.display === null || counts.perGame === null) return <>—</>;
+  const short = counts.display < counts.perGame;
+  return (
+    <span className={`question-count${short ? " is-short" : ""}`}>
+      <strong>{counts.display}</strong> per quiz
+      <small>
+        {short
+          ? `Needs ${counts.perGame} · only ${counts.display} usable`
+          : `from ${counts.eligible ?? counts.total} usable`}
+      </small>
+    </span>
+  );
+}
+
 export function Championships() {
+  const admin = portal.kind === "admin";
   const [revision, setRevision] = useState(0);
   const [errorMessage, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [pending, setPending] = useState("");
+  const [renaming, setRenaming] = useState<Row | null>(null);
+  const [statusFilter, setStatusFilter] = useState("");
   const { profile } = useAuth();
-  const { data, loading, error } = useLoad<unknown>(
-    portal.kind === "teacher"
-      ? "/teacher/championships"
-      : "/championships/feed",
-    revision,
-  );
-  async function toggle(row: Row) {
+  const { confirm, dialog } = useConfirm();
+  const list = useChampionshipList(revision);
+  const adminControls = admin && !list.limited;
+  const matchesStatus =
+    STATUS_FILTERS.find(([value]) => value === statusFilter)?.[2] ?? (() => true);
+  const rows = list.rows.filter(matchesStatus).map((row) => ({
+    ...row,
+    champ_code: championshipCode(row),
+    total_questions: championshipQuestionCounts(row).total,
+    questions_to_display: championshipQuestionCounts(row).display,
+  }));
+  async function run(row: Row, path: string, body: Row, done: string) {
     const id = String(row.champ_id);
     setPending(id);
     setError("");
+    setMessage("");
     try {
-      await api(`/teacher/championships/${encodeURIComponent(id)}/status`, {
-        method: "PATCH",
-        body: { status: Number(row.status) === 1 ? 0 : 1 },
-      });
+      await api(path, { method: "PATCH", body });
+      setMessage(done);
       setRevision((v) => v + 1);
     } catch (e) {
       setError(errorText(e));
@@ -56,13 +147,59 @@ export function Championships() {
       setPending("");
     }
   }
+  async function toggle(row: Row) {
+    const id = encodeURIComponent(String(row.champ_id));
+    const status = Number(row.status) === 1 ? 0 : 1;
+    const name = String(row.champ_name);
+    if (
+      !(await confirm({
+        title: status ? "Activate championship?" : "Deactivate championship?",
+        message: status
+          ? `“${name}” will become available to players during its scheduled dates.`
+          : `“${name}” will be hidden from players until it is activated again. Results already recorded are kept.`,
+        confirmLabel: status ? "Activate" : "Deactivate",
+        isDangerous: !status,
+      }))
+    )
+      return;
+    const own = portal.kind === "teacher" || String(row.teacher_id) === String(profile?.id);
+    return run(
+      row,
+      adminControls && !own
+        ? `/admin/championships/${id}/status`
+        : `/teacher/championships/${id}/status`,
+      { status },
+      `“${String(row.champ_name)}” is now ${status ? "active" : "inactive"}.`,
+    );
+  }
+  async function block(row: Row) {
+    const blocked = !isBlocked(row);
+    const name = String(row.champ_name);
+    if (
+      !(await confirm({
+        title: blocked ? "Block championship?" : "Unblock championship?",
+        message: blocked
+          ? `Players will not be able to open or join “${name}” until it is unblocked. Teachers cannot activate it while it is blocked.`
+          : `“${name}” can be opened and joined again if it is active.`,
+        confirmLabel: blocked ? "Block" : "Unblock",
+        isDangerous: blocked,
+      }))
+    )
+      return;
+    return run(
+      row,
+      `/admin/championships/${encodeURIComponent(String(row.champ_id))}/block`,
+      { blocked },
+      `“${String(row.champ_name)}” is ${blocked ? "blocked" : "unblocked"}.`,
+    );
+  }
   return (
     <>
       <Heading
         title="Championships"
         description={
-          portal.kind === "admin"
-            ? "Active championships across kGamify."
+          admin
+            ? "Manage championships across kGamify."
             : "Manage the championships you have created."
         }
         action={
@@ -71,64 +208,240 @@ export function Championships() {
           </Button>
         }
       />
-      {portal.kind === "admin" && (
+      {admin && list.limited && (
         <Notice kind="info">
-          This list shows active championships. You can edit championships
-          created by your account.
+          This list shows active championships only, and admin controls are
+          unavailable, because the service does not provide championship
+          management for admins yet. You can edit championships created by
+          your account.
         </Notice>
       )}
       {errorMessage && <Notice kind="error">{errorMessage}</Notice>}
+      {message && <Notice kind="success">{message}</Notice>}
       <Card>
-        {error ? (
-          <Retry error={error} onRetry={() => setRevision((v) => v + 1)} />
+        {list.error ? (
+          <Retry error={list.error} onRetry={() => setRevision((v) => v + 1)} />
         ) : (
+          <>
+          <p className="muted table-note">
+            <strong>Questions to display</strong> is how many questions each
+            player gets in one quiz. Only usable questions count: those
+            included for live quizzes in their question set and not blocked.
+          </p>
           <DataTable
-            rows={rowsOf(data)}
-            loading={loading}
+            rows={rows}
+            loading={list.loading}
+            serial
+            searchPlaceholder="Name, ID or category"
+            sortable={[
+              "champ_code",
+              "champ_name",
+              "total_questions",
+              "questions_to_display",
+              "start_date",
+              "end_date",
+            ]}
+            sortValue={{ champ_code: (row) => Number(row.champ_id) || String(row.champ_code) }}
+            toolbar={
+              <label>
+                Status
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  {STATUS_FILTERS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            }
+            emptyMessage={statusFilter ? "No championships with this status" : undefined}
+            emptyDescription={statusFilter ? "Choose another status to see more championships." : undefined}
+            rowClassName={(row) => (isBlocked(row) ? "is-blocked" : undefined)}
+            render={{
+              status: (row) => <ChampionshipStatus row={row} />,
+              champ_name: (row) => (
+                <Link
+                  className="table-link"
+                  href={`/championships/${encodeURIComponent(String(row.champ_id))}`}
+                  title="View championship details"
+                >
+                  {String(row.champ_name || "Untitled championship")}
+                </Link>
+              ),
+              champ_code: (row) => <code className="entity-code">{String(row.champ_code)}</code>,
+              total_questions: (row) => <QuestionCount row={row} kind="total" />,
+              questions_to_display: (row) => (
+                <QuestionCount row={row} kind="display" />
+              ),
+            }}
             columns={[
-              ["champ_name", "Championship"],
-              ["category_name", "Category"],
+              ["champ_code", "Championship ID"],
+              ["champ_name", "Championship name"],
+              ["total_questions", "No. of questions"],
+              ["questions_to_display", "Questions to display"],
               ["start_date", "Start date"],
               ["end_date", "End date"],
-              ["total_participants", "Participants"],
               ["status", "Status"],
+              [ACTIONS_COLUMN, "Actions"],
             ]}
-            actions={(row) => (
-              <>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  href={`/championships/${encodeURIComponent(String(row.champ_id))}`}
-                >
-                  View
-                </Button>
-                {(portal.kind === "teacher" ||
-                  String(row.teacher_id) === String(profile?.id)) && (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      href={`/championships/${encodeURIComponent(String(row.champ_id))}/edit`}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      loading={pending === String(row.champ_id)}
-                      disabled={pending === String(row.champ_id)}
+            actions={(row) => {
+              const id = String(row.champ_id);
+              const own =
+                portal.kind === "teacher" ||
+                String(row.teacher_id) === String(profile?.id);
+              const busy = pending === id;
+              const blocked = isBlocked(row);
+              const activeNow = Number(row.status) === 1;
+              const path = encodeURIComponent(id);
+              return (
+                <IconActions>
+                  <IconButton
+                    icon="view"
+                    label="View championship details"
+                    href={`/championships/${path}`}
+                  />
+                  {own ? (
+                    <IconButton
+                      icon="edit"
+                      label="Edit championship"
+                      href={`/championships/${path}/edit`}
+                    />
+                  ) : (
+                    adminControls && (
+                      <IconButton
+                        icon="edit"
+                        label="Edit championship name"
+                        disabled={busy}
+                        onClick={() => setRenaming(row)}
+                      />
+                    )
+                  )}
+                  {(own || adminControls) && (
+                    <IconButton
+                      icon={activeNow ? "deactivate" : "activate"}
+                      label={activeNow ? "Deactivate championship" : "Activate championship"}
+                      tone={activeNow ? "warning" : "success"}
+                      loading={busy}
+                      disabled={busy || (blocked && !adminControls)}
+                      disabledReason={blocked && !adminControls ? "Blocked by an admin" : undefined}
                       onClick={() => toggle(row)}
-                    >
-                      {Number(row.status) === 1 ? "Deactivate" : "Activate"}
-                    </Button>
-                  </>
-                )}
-              </>
-            )}
+                    />
+                  )}
+                  {adminControls && (
+                    <IconButton
+                      icon={blocked ? "unblock" : "block"}
+                      label={blocked ? "Unblock championship" : "Block championship"}
+                      tone={blocked ? "default" : "danger"}
+                      disabled={busy}
+                      onClick={() => block(row)}
+                    />
+                  )}
+                  <IconButton
+                    icon="leaderboard"
+                    label="View leaderboard"
+                    href={`/leaderboard/${path}`}
+                  />
+                </IconActions>
+              );
+            }}
           />
+          </>
         )}
       </Card>
+      {dialog}
+      {renaming && (
+        <RenameChampionship
+          row={renaming}
+          onClose={() => setRenaming(null)}
+          onSaved={(name) => {
+            setRenaming(null);
+            setError("");
+            setMessage(`Championship name updated to “${name}”.`);
+            setRevision((v) => v + 1);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function RenameChampionship({
+  row,
+  onClose,
+  onSaved,
+}: {
+  row: Row;
+  onClose: () => void;
+  onSaved: (name: string) => void;
+}) {
+  const [name, setName] = useState(String(row.champ_name || ""));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const value = name.trim().replace(/\s+/g, " ");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    if (value.length < 2 || value.length > 100) {
+      setError("Use between 2 and 100 characters.");
+      return;
+    }
+    if (value === String(row.champ_name)) {
+      onClose();
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api(
+        `/admin/championships/${encodeURIComponent(String(row.champ_id))}`,
+        { method: "PUT", body: { champName: value } },
+      );
+      onSaved(value);
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      isOpen
+      onClose={() => !busy && onClose()}
+      title="Edit championship"
+      description="The new name appears everywhere this championship is shown."
+    >
+      <form onSubmit={submit}>
+        {error && <Notice kind="error">{error}</Notice>}
+        <div className="field">
+          <label htmlFor="rename-championship">Championship name</label>
+          <input
+            id="rename-championship"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            minLength={2}
+            maxLength={100}
+            required
+            autoFocus
+            disabled={busy}
+          />
+        </div>
+        <div className="form-actions">
+          <Button type="submit" loading={busy} disabled={busy}>
+            {busy ? "Saving…" : "Save name"}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy}
+            onClick={onClose}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 function dateValue(value: unknown) {
@@ -241,13 +554,19 @@ export function ChampionshipDetails({ id }: { id: string }) {
     <>
       <Heading
         title={String(data?.champ_name || "Championship")}
+        breadcrumb={<Link href="/championships">← All championships</Link>}
         action={
-          <Link
-            className="button secondary"
-            href={`/analytics/${encodeURIComponent(id)}`}
-          >
-            View analytics
-          </Link>
+          <div className="dashboard-actions">
+            <Button
+              variant="secondary"
+              href={`/analytics?championshipId=${encodeURIComponent(id)}`}
+            >
+              View analytics
+            </Button>
+            <Button href={`/leaderboard/${encodeURIComponent(id)}`}>
+              View leaderboard
+            </Button>
+          </div>
         }
       />
       {loading ? (
@@ -260,6 +579,7 @@ export function ChampionshipDetails({ id }: { id: string }) {
             <Card>
               <dl className="details-list">
                 {[
+                  ["Championship ID", championshipCode(data)],
                   ["Category", data.category_name],
                   ["Teacher", data.teacher_name],
                   [
@@ -271,10 +591,21 @@ export function ChampionshipDetails({ id }: { id: string }) {
                     `${dateValue(data.end_date)} ${data.end_time || ""}`,
                   ],
                   ["Status", Number(data.status) === 1 ? "Active" : "Inactive"],
+                  [
+                    "Access",
+                    isBlocked(data)
+                      ? "Blocked by an admin · players cannot open or join"
+                      : "Not blocked",
+                  ],
+                  ["Total questions", championshipQuestionCounts(data).total],
+                  [
+                    "Questions to display",
+                    championshipQuestionCounts(data).display,
+                  ],
                 ].map(([label, value]) => (
                   <div key={String(label)}>
                     <dt>{String(label)}</dt>
-                    <dd>{String(value || "—")}</dd>
+                    <dd>{String(value ?? "") || "—"}</dd>
                   </div>
                 ))}
               </dl>
@@ -293,131 +624,6 @@ export function ChampionshipDetails({ id }: { id: string }) {
             </Card>
           </>
         )
-      )}
-    </>
-  );
-}
-export function ChampionshipAnalytics({ id }: { id?: string }) {
-  const [revision, setRevision] = useState(0);
-  const list = useLoad<unknown>(
-    !id
-      ? portal.kind === "teacher"
-        ? "/teacher/championships"
-        : "/championships/feed"
-      : null,
-    revision,
-  );
-  const stats = useLoad<{
-    championship: { name: string };
-    analytics: Record<string, number>;
-  }>(
-    id && portal.kind === "teacher"
-      ? `/teacher/analytics/${encodeURIComponent(id)}`
-      : null,
-    revision,
-  );
-  const results = useLoad<unknown>(
-    id
-      ? portal.kind === "teacher"
-        ? `/teacher/championships/${encodeURIComponent(id)}/participants`
-        : `/championships/${encodeURIComponent(id)}/leaderboard?limit=200`
-      : null,
-    revision,
-  );
-  return (
-    <>
-      <Heading
-        title={stats.data?.championship?.name || "Championship Analytics"}
-        description={
-          id
-            ? "Scores and participation for this championship."
-            : "Select a championship to view its results."
-        }
-      />
-      {!id ? (
-        <Card>
-          {list.error ? (
-            <Retry
-              error={list.error}
-              onRetry={() => setRevision((v) => v + 1)}
-            />
-          ) : (
-            <DataTable
-              rows={rowsOf(list.data)}
-              loading={list.loading}
-              columns={[
-                ["champ_name", "Championship"],
-                ["category_name", "Category"],
-              ]}
-              actions={(row) => (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  href={`/analytics/${encodeURIComponent(String(row.champ_id))}`}
-                >
-                  View results
-                </Button>
-              )}
-            />
-          )}
-        </Card>
-      ) : (
-        <>
-          {stats.loading && <Loading />}
-          {stats.error && (
-            <Retry
-              error={stats.error}
-              onRetry={() => setRevision((v) => v + 1)}
-            />
-          )}{" "}
-          {stats.data && (
-            <section className="metrics">
-              {Object.entries(stats.data.analytics).map(([key, value]) => (
-                <div className="metric" key={key}>
-                  <span>{key.replace(/([A-Z])/g, " $1")}</span>
-                  <strong>{value}</strong>
-                </div>
-              ))}
-            </section>
-          )}
-          <Card style={{ marginTop: 20 }}>
-            <h2 style={{ margin: "0 0 16px" }}>
-              {portal.kind === "teacher" ? "Participants" : "Leaderboard"}
-            </h2>
-            {results.error ? (
-              <Retry
-                error={results.error}
-                onRetry={() => setRevision((v) => v + 1)}
-              />
-            ) : (
-              <DataTable
-                rows={rowsOf(results.data)}
-                loading={results.loading}
-                columns={
-                  portal.kind === "teacher"
-                    ? [
-                        ["user_name", "Student"],
-                        ["email", "Email"],
-                        ["total_score", "Score"],
-                        ["total_bonus", "Bonus"],
-                        ["correct_questions", "Correct"],
-                        ["total_questions", "Questions"],
-                        ["time_taken", "Time"],
-                      ]
-                    : [
-                        ["rank", "Rank"],
-                        ["userName", "Student"],
-                        ["score", "Score"],
-                        ["bonus", "Bonus"],
-                        ["correctCount", "Correct"],
-                        ["totalQuestions", "Questions"],
-                        ["timeTaken", "Time"],
-                      ]
-                }
-              />
-            )}
-          </Card>
-        </>
       )}
     </>
   );
