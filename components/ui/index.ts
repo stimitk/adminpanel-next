@@ -22,3 +22,5 @@ export * from "./confirm";
 export * from "./drawer";
 export * from "./pagination";
 export * from "./entity-picker";
+export * from "./identity";
+export * from "./search-filter-bar";

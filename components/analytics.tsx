@@ -9,12 +9,13 @@ import {
   type PerformanceRow,
 } from "../lib/performance";
 import { portal } from "../lib/portal";
+import { matchesSearch } from "../lib/search";
 import type { Row } from "../lib/types";
-import { BarList, ColumnChart, StackedBarList } from "./charts";
+import { BarList, ColumnChart, KpiCards, StackedBarList, type Stat } from "./charts";
 import { useChampionshipList } from "./championships";
 import { loadQuestionSets, loadTeachers } from "./pickers";
-import { Icon } from "./shell";
 import {
+  ACTIONS_COLUMN,
   Button,
   Card,
   DataTable,
@@ -22,7 +23,7 @@ import {
   Heading,
   IconActions,
   IconButton,
-  MetricCard,
+  Identity,
   Notice,
   Retry,
   useLoad,
@@ -107,20 +108,21 @@ export function AnalyticsDashboard() {
   const activeFilters = Object.entries(filters).filter(([, v]) => v).length;
   const notSupported = performance.error && /404|not found|unavailable/i.test(performance.error);
 
-  const kpis = [
-    { label: "Total participants", icon: "users", value: totals.participants.toLocaleString(), definition: "Plays recorded for the selected championships and question sets." },
-    { label: "Questions attempted", icon: "question", value: totals.attempted.toLocaleString(), definition: `${totals.correct.toLocaleString()} correct · ${totals.incorrect.toLocaleString()} incorrect` },
-    { label: "Accuracy", icon: "chart", value: percent(totals.accuracy), definition: "Correct answers ÷ questions attempted." },
-    { label: "Average score", icon: "trophy", value: `${totals.avgScore.toFixed(1)}`, definition: `Average marks per participant (${percent(totals.avgScorePercent)} of total marks).` },
-    { label: "Avg completion time", icon: "dashboard", value: formatDuration(totals.avgTime), definition: "Average time a participant spent per play." },
-    { label: "Completion rate", icon: "file", value: percent(totals.completionRate), definition: "Share of plays where every question was answered." },
+  const peak = daily.reduce<(typeof daily)[number] | null>(
+    (best, d) => (!best || d.participants > best.participants ? d : best),
+    null,
+  );
+  const kpis: Stat[] = [
+    { label: "Participants", value: totals.participants.toLocaleString(), definition: "Plays recorded for the selected championships and question sets." },
+    { label: "Accuracy", value: percent(totals.accuracy), definition: "Correct answers ÷ questions attempted." },
+    { label: "Average score", value: percent(totals.avgScorePercent), definition: `Average marks per participant as a share of total marks (${totals.avgScore.toFixed(1)} marks).` },
+    { label: "Completion rate", value: percent(totals.completionRate), definition: "Share of plays where every question was answered." },
   ];
 
   return (
     <>
       <Heading
         title="Championship Analytics"
-        description="Performance across championships and question sets. Filters update every card, chart and the table."
         action={<Button variant="secondary" href="/leaderboard">Open leaderboards</Button>}
       />
       <Card className="analytics-filters">
@@ -160,16 +162,16 @@ export function AnalyticsDashboard() {
             <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => update({ to: e.target.value })} />
           </label>
         </div>
-        <div className="filter-footer">
-          <span className="muted" role="status">
-            {activeFilters ? `${activeFilters} ${activeFilters === 1 ? "filter" : "filters"} applied` : "Showing all data"}
-          </span>
-          {activeFilters > 0 && (
+        {activeFilters > 0 && (
+          <div className="filter-footer">
+            <span className="muted" role="status">
+              {activeFilters} {activeFilters === 1 ? "filter" : "filters"} applied
+            </span>
             <Button size="sm" variant="text" onClick={() => setFilters(EMPTY)}>
               Reset filters
             </Button>
-          )}
-        </div>
+          </div>
+        )}
         {dateError && <Notice kind="error">The start date must be on or before the end date.</Notice>}
       </Card>
 
@@ -181,23 +183,34 @@ export function AnalyticsDashboard() {
         <Retry error={performance.error} onRetry={() => setRevision((v) => v + 1)} />
       ) : (
         <>
-          <section className="metrics analytics-metrics" aria-label="Key metrics" aria-busy={performance.loading}>
-            {kpis.map((kpi) => (
-              <MetricCard
-                key={kpi.label}
-                icon={<Icon name={kpi.icon} />}
-                label={kpi.label}
-                value={kpi.value}
-                definition={kpi.definition}
-                loading={performance.loading}
-                delta={<small className="delta">{kpi.definition}</small>}
-              />
-            ))}
-          </section>
+          <KpiCards label="Key metrics" stats={kpis} loading={performance.loading} />
+          <Card style={{ marginBottom: 20 }}>
+            <div className="section-heading">
+              <h2>Participation over time</h2>
+              {peak && peak.participants > 0 && (
+                <span className="muted">
+                  Peak {shortDate(peak.date)} · {peak.participants.toLocaleString()} participants
+                </span>
+              )}
+            </div>
+            <ColumnChart
+              label="Participants per day"
+              start={daily.length ? shortDate(daily[0].date) : undefined}
+              end={daily.length > 1 ? shortDate(daily[daily.length - 1].date) : undefined}
+              points={daily.map((d) => ({
+                key: d.date,
+                value: d.participants,
+                tooltip: `${shortDate(d.date)}: ${d.participants.toLocaleString()} participants`,
+              }))}
+            />
+          </Card>
           <div className="analytics-grid">
             <Card>
               <div className="section-heading">
                 <h2>Accuracy by championship</h2>
+                {byChampionship.length > 10 && (
+                  <span className="muted">Top 10 of {byChampionship.length}</span>
+                )}
               </div>
               <BarList
                 bars={byChampionship.slice(0, 10).map((g) => ({
@@ -211,20 +224,18 @@ export function AnalyticsDashboard() {
                 max={100}
                 format={(v) => percent(v)}
               />
-              {byChampionship.length > 10 && (
-                <p className="muted chart-note">Top 10 of {byChampionship.length}. See the table for all.</p>
-              )}
             </Card>
             <Card>
               <div className="section-heading">
                 <h2>Answers by question set</h2>
+                {bySet.length > 0 && <span className="muted">Most attempted · value is accuracy</span>}
               </div>
               <StackedBarList
                 series={["Correct", "Incorrect"]}
                 bars={bySet.map((g) => ({
                   key: g.id,
                   label: String(g.first.label_name),
-                  detail: `${questionSetCode(g.first)} · ${g.first.teacher_name} (${teacherCode(g.first)})`,
+                  detail: `${questionSetCode(g.first)} · ${g.first.teacher_name}`,
                   segments: [
                     { value: g.correct, tooltip: `${g.first.label_name}: ${g.correct.toLocaleString()} correct (${percent(g.accuracy)})` },
                     { value: g.incorrect, tooltip: `${g.first.label_name}: ${g.incorrect.toLocaleString()} incorrect (${percent(100 - g.accuracy)})` },
@@ -232,27 +243,8 @@ export function AnalyticsDashboard() {
                 }))}
                 total={(bar) => percent(bySet.find((g) => g.id === bar.key)?.accuracy ?? 0)}
               />
-              {bySet.length > 0 && <p className="muted chart-note">Eight most-attempted sets. Value shows accuracy.</p>}
             </Card>
           </div>
-          <Card style={{ marginTop: 20 }}>
-            <div className="section-heading">
-              <h2>Participation over time</h2>
-              {daily.length > 0 && (
-                <span className="muted">
-                  {shortDate(daily[0].date)} – {shortDate(daily[daily.length - 1].date)}
-                </span>
-              )}
-            </div>
-            <ColumnChart
-              label="Participants per day"
-              points={daily.map((d) => ({
-                key: d.date,
-                value: d.participants,
-                tooltip: `${shortDate(d.date)}: ${d.participants.toLocaleString()} participants`,
-              }))}
-            />
-          </Card>
           <Card style={{ marginTop: 20 }}>
             <div className="section-heading">
               <h2>Detailed performance</h2>
@@ -264,44 +256,44 @@ export function AnalyticsDashboard() {
               serial
               sortable
               defaultSort={{ key: "participants", dir: "desc" }}
-              searchPlaceholder="Championship, set or teacher"
+              searchPlaceholder="Championship, set or teacher name or ID"
+              searchMatch={(row, q) =>
+                matchesSearch(
+                  [row.champ_name, row.champ_code, row.category_name, row.label_name, row.label_code, row.teacher_name, row.teacher_code].join(" "),
+                  q,
+                )
+              }
               rowKey={(row) => `${row.champ_id}:${row.label_id}`}
-              sortValue={{
-                champ_code: (row) => Number(row.champ_id),
-                label_code: (row) => Number(row.label_id),
-                teacher_code: (row) => Number(row.teacher_id),
-              }}
+              sortValue={{ avg_score: (row) => Number(row.avg_score) }}
               emptyMessage="No results for these filters"
               emptyDescription="Widen the date range or reset the filters."
               columns={[
+                [ACTIONS_COLUMN, "Actions"],
                 ["champ_name", "Championship"],
-                ["champ_code", "Championship ID"],
-                ["category_name", "Category"],
                 ["label_name", "Question set"],
-                ["label_code", "Question set ID"],
                 ["teacher_name", "Teacher"],
-                ["teacher_code", "Teacher ID"],
                 ["participants", "Participants"],
-                ["total_questions", "Total questions"],
                 ["attempted", "Attempted"],
                 ["correct", "Correct"],
-                ["incorrect", "Incorrect"],
                 ["accuracy", "Accuracy"],
                 ["avg_score", "Avg score"],
-                ["total_marks", "Total marks"],
                 ["avg_time_sec", "Avg time"],
                 ["completion_rate", "Completion"],
               ]}
               render={{
-                champ_code: (row) => <code className="entity-code">{String(row.champ_code)}</code>,
-                label_code: (row) => <code className="entity-code">{String(row.label_code)}</code>,
-                teacher_code: (row) => <code className="entity-code">{String(row.teacher_code)}</code>,
+                champ_name: (row) => <Identity name={row.champ_name} code={String(row.champ_code)} />,
+                label_name: (row) => <Identity name={row.label_name} code={String(row.label_code)} />,
+                teacher_name: (row) => <Identity name={row.teacher_name} code={String(row.teacher_code)} />,
                 participants: (row) => Number(row.participants).toLocaleString(),
                 attempted: (row) => Number(row.attempted).toLocaleString(),
                 correct: (row) => Number(row.correct).toLocaleString(),
-                incorrect: (row) => Number(row.incorrect).toLocaleString(),
                 accuracy: (row) => percent(Number(row.accuracy)),
-                avg_score: (row) => Number(row.avg_score).toFixed(1),
+                avg_score: (row) => (
+                  <span className="score-of">
+                    {Number(row.avg_score).toFixed(1)}
+                    <small> / {String(row.total_marks ?? "—")}</small>
+                  </span>
+                ),
                 avg_time_sec: (row) => formatDuration(row.avg_time_sec),
                 completion_rate: (row) => percent(Number(row.completion_rate)),
               }}

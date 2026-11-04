@@ -1,16 +1,30 @@
 "use client";
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, errorText, rowsOf } from "../lib/api";
 import { questionFields } from "../lib/resources";
-import { correctAnswerLabel } from "../lib/answers";
+import { parseCorrectAnswers } from "../lib/answers";
+import {
+  championshipLabelIds,
+  championshipPhase,
+  type ChampionshipPhase,
+} from "../lib/championships";
 import { isBlocked, isIncludedInLive, questionBody } from "../lib/questions";
 import { portal } from "../lib/portal";
 import { plainRichText } from "../lib/rich-text";
-import { questionSetCode, teacherCode } from "../lib/codes";
+import {
+  championshipCode,
+  questionCode,
+  questionSetCode,
+  teacherCode,
+} from "../lib/codes";
+import { useChampionshipList } from "./championships";
 import { loadQuestionSets, loadTeachers } from "./pickers";
+import { RichText } from "./rich-text-editor";
 import type { Row } from "../lib/types";
 import {
+  ACTIONS_COLUMN,
   DataTable,
   Form,
   Heading,
@@ -21,13 +35,17 @@ import {
   Card,
   Button,
   Badge,
-  ActionIcon,
+  Drawer,
   EntityPicker,
   IconActions,
   IconButton,
+  Identity,
   Pagination,
   useConfirm,
   useDebounced,
+  SearchFilterBar,
+  type BadgeVariant,
+  type FilterChip,
   type PickerOption,
 } from "./ui";
 
@@ -55,26 +73,49 @@ export function LiveStateBadge({ row }: { row: Row }) {
   );
 }
 
-const SEARCH_FIELDS = [
-  ["all", "All fields"],
-  ["bank", "Question bank name"],
-  ["teacher", "Teacher name"],
-  ["teacherId", "Teacher ID"],
-  ["set", "Question set name"],
-] as const;
-const LIVE_STATES = [
-  ["", "Any live quiz state"],
+const STATUSES = [
+  ["", "Any status"],
   ["included", "Included"],
   ["excluded", "Excluded"],
   ["blocked", "Blocked"],
 ] as const;
+// Live quiz: whether the question's set is used by a championship that is live today.
+const LIVE_QUIZ = [
+  ["", "Any"],
+  ["yes", "Included"],
+  ["no", "Excluded"],
+] as const;
 
-function Identity({ name, code }: { name: unknown; code: string | null }) {
-  if (!name && !code) return <>—</>;
+// Correct option numbers with their (plain) text, e.g. "2 · Paris".
+function CorrectAnswer({ row }: { row: Row }) {
+  const answers = parseCorrectAnswers(row.correct_answer);
+  if (!answers.length) return <>{String(row.correct_answer ?? "—")}</>;
   return (
-    <span className="identity">
-      <span>{String(name || "—")}</span>
-      {code && <code className="entity-code">{code}</code>}
+    <ul className="answer-list">
+      {answers.map((n) => (
+        <li key={n}>
+          <strong>{n}</strong> {plainRichText(row[`option${n}_text`]) || "—"}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Which live championships currently draw this question from its set.
+function LiveQuizCell({ row, live }: { row: Row; live: Row[] }) {
+  if (!live.length) return <span className="muted">Not live</span>;
+  const names = live.map((c) => String(c.champ_name)).join(", ");
+  if (isBlocked(row) || !isIncludedInLive(row))
+    return (
+      <span className="muted" title={`Set is live in: ${names}`}>
+        Not shown ({liveState(row).toLowerCase()})
+      </span>
+    );
+  return (
+    <span title={names}>
+      <Badge variant="info">
+        Live in {live.length} {live.length === 1 ? "championship" : "championships"}
+      </Badge>
     </span>
   );
 }
@@ -84,65 +125,78 @@ export function QuestionBank() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [keyword, setKeyword] = useState("");
-  const [field, setField] = useState<(typeof SEARCH_FIELDS)[number][0]>("all");
-  const [text, setText] = useState("");
   const [teacher, setTeacher] = useState<PickerOption | null>(null);
   const [set, setSet] = useState<PickerOption | null>(null);
-  const [liveFilter, setLiveFilter] = useState("");
+  const [status, setStatus] = useState("");
+  const [liveQuiz, setLiveQuiz] = useState("");
   const [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<string[]>([]);
   const [removing, setRemoving] = useState(false);
   const [blocking, setBlocking] = useState("");
+  const [viewing, setViewing] = useState<Row | null>(null);
   const [result, setResult] = useState<{
     kind: "success" | "error";
     text: string;
   } | null>(null);
   const { confirm, dialog } = useConfirm();
+  const championships = useChampionshipList(0);
   // Typing waits for a pause before querying, so each keystroke is not a request.
   const q = useDebounced(keyword.trim(), 350);
-  const search = useDebounced(text.trim(), 350);
   const label = set?.value || "";
-  const filterKey = [q, field, search, teacher?.value, label, liveFilter, pageSize].join("|");
+  const filterKey = [q, teacher?.value, label, status, liveQuiz, pageSize].join("|");
   useEffect(() => setPage(1), [filterKey]);
+  // One keyword searches every field: question ID and text, set name and ID,
+  // teacher name and ID, and bank.
   const query = new URLSearchParams({
     page: String(page),
     limit: String(pageSize),
-    ...(q ? { q, field } : {}),
-    ...(search ? { search } : {}),
+    ...(q ? { q, field: "all" } : {}),
     ...(teacher ? { teacherId: teacher.value } : {}),
     ...(label ? { labelId: label } : {}),
-    ...(liveFilter ? { liveState: liveFilter } : {}),
+    ...(status ? { liveState: status } : {}),
+    ...(liveQuiz ? { liveChampionship: liveQuiz } : {}),
   });
   const { data, loading, error } = useLoad<{ questions: Row[]; total: number }>(
     `/questions/?${query}`,
     revision,
   );
+  // Set → championships that use it, for the Live quiz column and the details panel.
+  const bySet = new Map<string, Row[]>();
+  for (const c of championships.rows)
+    for (const id of championshipLabelIds(c)) bySet.set(id, [...(bySet.get(id) || []), c]);
+  const championshipsOf = (row: Row) => bySet.get(String(row.label_id)) || [];
+  const liveIn = (row: Row) => championshipsOf(row).filter((c) => championshipPhase(c) === "Live");
   const setName = set?.label || "this question set";
   const rows = (data?.questions || []).map((row) => ({
     ...row,
-    correct_answer: correctAnswerLabel(row.correct_answer),
+    question_code: questionCode(row),
     live_state: liveState(row),
     label_code: row.label_id ? questionSetCode(row) : null,
     teacher_code: row.teacher_id ? teacherCode(row) : null,
   }));
-  const chips: [string, string, () => void][] = [
-    ...(q
-      ? [[`${SEARCH_FIELDS.find(([v]) => v === field)?.[1]}: “${q}”`, "keyword", () => setKeyword("")] as [string, string, () => void]]
+  const chips: FilterChip[] = [
+    ...(q ? [{ key: "keyword", label: `Search: “${q}”`, clear: () => setKeyword("") }] : []),
+    ...(teacher
+      ? [{ key: "teacher", label: `Teacher: ${teacher.label} (${teacher.detail?.split(" · ")[0]})`, clear: () => setTeacher(null) }]
       : []),
-    ...(search ? [[`Question text: “${search}”`, "text", () => setText("")] as [string, string, () => void]] : []),
-    ...(teacher ? [[`Teacher: ${teacher.label} (${teacher.detail?.split(" · ")[0]})`, "teacher", () => setTeacher(null)] as [string, string, () => void]] : []),
-    ...(set ? [[`Question set: ${set.label}`, "set", () => setSet(null)] as [string, string, () => void]] : []),
-    ...(liveFilter
-      ? [[`Live quiz: ${LIVE_STATES.find(([v]) => v === liveFilter)?.[1]}`, "live", () => setLiveFilter("")] as [string, string, () => void]]
+    ...(set ? [{ key: "set", label: `Question set: ${set.label}`, clear: () => setSet(null) }] : []),
+    ...(status
+      ? [{ key: "status", label: `Status: ${STATUSES.find(([v]) => v === status)?.[1]}`, clear: () => setStatus("") }]
+      : []),
+    ...(liveQuiz
+      ? [{ key: "live", label: `Live quiz: ${LIVE_QUIZ.find(([v]) => v === liveQuiz)?.[1]}`, clear: () => setLiveQuiz("") }]
       : []),
   ];
-  function clearAll() {
-    setKeyword("");
-    setText("");
-    setField("all");
+  const panelFilters = [teacher, set, status, liveQuiz].filter(Boolean).length;
+  function clearFilters() {
     setTeacher(null);
     setSet(null);
-    setLiveFilter("");
+    setStatus("");
+    setLiveQuiz("");
+  }
+  function clearAll() {
+    setKeyword("");
+    clearFilters();
     setResult(null);
   }
 
@@ -173,6 +227,9 @@ export function QuestionBank() {
           ? "Question blocked. It will not appear in live quizzes."
           : "Question unblocked. It can appear in live quizzes again if it is included in its set.",
       });
+      setViewing((current) =>
+        current && String(current.question_id) === id ? { ...current, is_blocked: blocked } : current,
+      );
       setRevision((v) => v + 1);
     } catch (e) {
       setResult({ kind: "error", text: errorText(e) });
@@ -268,7 +325,7 @@ export function QuestionBank() {
     <>
       <Heading
         title="Question Bank"
-        description="Search across question banks, teachers and question sets. Results load one page at a time."
+        description="Every question in kGamify. Each belongs to one question set, and championships draw their questions from sets."
         action={
           <Button href="/questions/new">
             New Question
@@ -276,99 +333,62 @@ export function QuestionBank() {
         }
       />
       <Card>
-        <form className="search-panel" role="search" onSubmit={(e) => e.preventDefault()}>
-          <div className="search-main">
-            <label className="search-keyword">
-              Search
-              <span className="search-input">
-                <ActionIcon name="search" />
-                <input
-                  type="search"
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.target.value)}
-                  placeholder="Question bank, teacher name, teacher ID (e.g. TCH-0103) or question set"
-                  maxLength={100}
-                  aria-describedby="bank-search-help"
-                />
-              </span>
-            </label>
-            <label className="search-scope">
-              Search in
-              <select value={field} onChange={(e) => setField(e.target.value as typeof field)}>
-                {SEARCH_FIELDS.map(([value, name]) => (
-                  <option key={value} value={value}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <small id="bank-search-help" className="muted">
-            Partial, case-insensitive matches. Words can be in any order. Teachers
-            with the same name are told apart by their teacher ID.
-          </small>
-          <div className="search-filters">
-            {admin && (
-              <EntityPicker
-                label="Teacher"
-                placeholder="Name or teacher ID"
-                value={teacher}
-                onChange={setTeacher}
-                load={loadTeachers}
-              />
-            )}
+        <SearchFilterBar
+          value={keyword}
+          onChange={setKeyword}
+          label="Search questions"
+          placeholder="Search by question ID or text, set name or ID, teacher name or ID, or bank"
+          chips={chips}
+          filterCount={panelFilters}
+          onClearFilters={clearFilters}
+          onClearAll={clearAll}
+        >
+          {admin && (
             <EntityPicker
-              label="Question set"
-              placeholder="Set name, bank or set ID"
-              value={set}
-              onChange={setSet}
-              load={loadQuestionSets}
+              label="Teacher"
+              placeholder="Name or teacher ID"
+              value={teacher}
+              onChange={setTeacher}
+              load={loadTeachers}
             />
-            <label>
-              Question text
-              <input
-                type="search"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Words in the question"
-                maxLength={100}
-              />
-            </label>
-            <label>
-              Live quiz
-              <select value={liveFilter} onChange={(e) => setLiveFilter(e.target.value)}>
-                {LIVE_STATES.map(([value, name]) => (
-                  <option key={value} value={value}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          {chips.length > 0 && (
-            <div className="filter-chips" aria-label="Active filters">
-              {chips.map(([name, key, clear]) => (
-                <span className="filter-chip" key={key}>
-                  {name}
-                  <button type="button" aria-label={`Remove filter ${name}`} onClick={clear}>
-                    <ActionIcon name="close" size={12} />
-                  </button>
-                </span>
-              ))}
-              <Button size="sm" variant="text" onClick={clearAll}>
-                Clear all
-              </Button>
-            </div>
           )}
-        </form>
+          <EntityPicker
+            label="Question set"
+            placeholder="Set name or set ID"
+            value={set}
+            onChange={setSet}
+            load={loadQuestionSets}
+          />
+          <label>
+            Status
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              {STATUSES.map(([value, name]) => (
+                <option key={value} value={value}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label title="Whether the question's set is used by a championship that is live today">
+            Live quiz
+            <select value={liveQuiz} onChange={(e) => setLiveQuiz(e.target.value)}>
+              {LIVE_QUIZ.map(([value, name]) => (
+                <option key={value} value={value}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </SearchFilterBar>
         {result && <Notice kind={result.kind}>{result.text}</Notice>}
-        <div className="bulk-actions" role="group" aria-label="Selected questions">
-          <span role="status">
-            {selected.length
-              ? `${selected.length} selected`
-              : label
-                ? "Select questions to remove them from this set."
-                : "Filter by a question set to remove questions from it."}
+        <div className="bulk-actions" role="group" aria-label="Results and selected questions">
+          <span role="status" aria-live="polite">
+            {loading
+              ? "Searching…"
+              : data
+                ? `${data.total.toLocaleString()} ${data.total === 1 ? "question" : "questions"}${chips.length ? " match your filters" : ""}`
+                : ""}
+            {selected.length > 0 && ` · ${selected.length} selected`}
           </span>
           {selected.length > 0 && (
             <Button
@@ -380,27 +400,22 @@ export function QuestionBank() {
               Clear selection
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="danger"
-            loading={removing}
-            disabled={removing || !label || !selected.length}
-            onClick={removeFromSet}
-          >
-            {removing ? "Removing…" : "Remove from set"}
-          </Button>
+          {label && (
+            <Button
+              size="sm"
+              variant="danger"
+              loading={removing}
+              disabled={removing || !selected.length}
+              onClick={removeFromSet}
+            >
+              {removing ? "Removing…" : "Remove from set"}
+            </Button>
+          )}
         </div>
         {error ? (
           <Retry error={error} onRetry={() => setRevision((v) => v + 1)} />
         ) : (
           <>
-            <p className="results-summary muted" role="status" aria-live="polite">
-              {loading
-                ? "Searching…"
-                : data
-                  ? `${data.total.toLocaleString()} ${data.total === 1 ? "question" : "questions"}${chips.length ? " match your filters" : " in the bank"}`
-                  : ""}
-            </p>
             <DataTable
               rows={rows}
               loading={loading}
@@ -423,14 +438,10 @@ export function QuestionBank() {
               }
               rowClassName={(row) => (isBlocked(row) ? "is-blocked" : undefined)}
               render={{
+                question_code: (row) => <code className="entity-code">{String(row.question_code)}</code>,
+                correct_answer: (row) => <CorrectAnswer row={row} />,
                 live_state: (row) => <LiveStateBadge row={row} />,
-                options: (row) => (
-                  <ol className="option-list">
-                    {[1, 2, 3, 4].map((n) => (
-                      <li key={n}>{plainRichText(row[`option${n}_text`]) || "—"}</li>
-                    ))}
-                  </ol>
-                ),
+                live_quiz: (row) => <LiveQuizCell row={row} live={liveIn(row)} />,
                 label_name: (row) => (
                   <Identity name={row.label_name} code={row.label_code as string | null} />
                 ),
@@ -447,20 +458,25 @@ export function QuestionBank() {
                 disabled: removing,
               }}
               columns={[
+                [ACTIONS_COLUMN, "Actions"],
+                ["question_code", "Question ID"],
                 ["question_text", "Question"],
-                ["options", "Options"],
-                ["correct_answer", "Correct"],
-                ["bank_name", "Question bank"],
+                ["correct_answer", "Correct answer"],
                 ["label_name", "Question set"],
                 ["teacher_name", "Teacher"],
-                ["live_state", "Live quiz"],
-                ["total_coins", "Coins"],
+                ["live_state", "Status"],
+                ["live_quiz", "Live quiz"],
               ]}
               actions={(row) => {
                 const id = String(row.question_id);
                 const blocked = isBlocked(row);
                 return (
                   <IconActions>
+                    <IconButton
+                      icon="view"
+                      label="View question details"
+                      onClick={() => setViewing(row)}
+                    />
                     <IconButton
                       icon="edit"
                       label="Edit question"
@@ -500,8 +516,127 @@ export function QuestionBank() {
           </>
         )}
       </Card>
+      {viewing && (
+        <QuestionDetails
+          row={viewing}
+          championships={championshipsOf(viewing)}
+          championshipsLoading={championships.loading}
+          admin={admin}
+          blocking={blocking === String(viewing.question_id)}
+          onBlock={() => toggleBlock(viewing)}
+          onClose={() => setViewing(null)}
+        />
+      )}
       {dialog}
     </>
+  );
+}
+
+const phaseBadge: Record<ChampionshipPhase, BadgeVariant> = {
+  Live: "active",
+  Scheduled: "info",
+  Ended: "neutral",
+  Inactive: "inactive",
+  Blocked: "suspended",
+};
+
+// One question with its place in the hierarchy: bank → set → championships.
+function QuestionDetails({
+  row,
+  championships,
+  championshipsLoading,
+  admin,
+  blocking,
+  onBlock,
+  onClose,
+}: {
+  row: Row;
+  championships: Row[];
+  championshipsLoading: boolean;
+  admin: boolean;
+  blocking: boolean;
+  onBlock: () => void;
+  onClose: () => void;
+}) {
+  const id = String(row.question_id);
+  const blocked = isBlocked(row);
+  const correct = parseCorrectAnswers(row.correct_answer);
+  return (
+    <Drawer
+      isOpen
+      onClose={onClose}
+      title="Question details"
+      description={
+        <>
+          <code className="entity-code">{questionCode(row)}</code> · <LiveStateBadge row={{ ...row, live_state: liveState(row) }} />
+        </>
+      }
+    >
+      <div className="question-detail">
+        <RichText value={row.question_text} />
+        <ol className="question-detail-options">
+          {[1, 2, 3, 4].map((n) => (
+            <li key={n} className={correct.includes(String(n)) ? "is-correct" : undefined}>
+              <span>{plainRichText(row[`option${n}_text`]) || "—"}</span>
+              {correct.includes(String(n)) && <Badge variant="active">Correct</Badge>}
+            </li>
+          ))}
+        </ol>
+      </div>
+      <dl className="details-grid compact">
+        {[
+          ["Question set", <Identity key="set" name={row.label_name} code={row.label_id ? questionSetCode(row) : null} />],
+          ["Teacher", <Identity key="teacher" name={row.teacher_name} code={row.teacher_id ? teacherCode(row) : null} />],
+          ["Question bank", String(row.bank_name || "—")],
+          ["Coins", String(row.total_coins ?? "—")],
+          ["Expected time", row.expected_time_sec ? `${row.expected_time_sec} sec` : "—"],
+        ].map(([name, value]) => (
+          <div key={String(name)}>
+            <dt>{name}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <h3 className="drawer-section-title">Championships using this question’s set</h3>
+      {championshipsLoading ? (
+        <Loading text="Loading championships…" />
+      ) : !row.label_id ? (
+        <p className="muted">Not in a question set, so no championship can use it.</p>
+      ) : championships.length ? (
+        <ul className="linked-list">
+          {championships.map((c) => {
+            const phase = championshipPhase(c);
+            return (
+              <li key={String(c.champ_id)}>
+                <Link href={`/championships/${encodeURIComponent(String(c.champ_id))}`}>
+                  {String(c.champ_name)}
+                </Link>
+                <code className="entity-code">{championshipCode(c)}</code>
+                <Badge variant={phaseBadge[phase]}>{phase}</Badge>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="muted">No championship uses this set yet.</p>
+      )}
+      {!blocked && !isIncludedInLive(row) && championships.length > 0 && (
+        <p className="muted">Excluded in its set, so live quizzes skip it.</p>
+      )}
+      <div className="form-actions">
+        <Button href={`/questions/${encodeURIComponent(id)}/edit`}>Edit question</Button>
+        {row.label_id ? (
+          <Button variant="secondary" href={`/labels/${encodeURIComponent(String(row.label_id))}`}>
+            Open question set
+          </Button>
+        ) : null}
+        {admin && (
+          <Button variant={blocked ? "secondary" : "danger"} loading={blocking} disabled={blocking} onClick={onBlock}>
+            {blocked ? "Unblock question" : "Block question"}
+          </Button>
+        )}
+      </div>
+    </Drawer>
   );
 }
 

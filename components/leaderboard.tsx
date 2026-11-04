@@ -16,9 +16,10 @@ import {
 import { portal } from "../lib/portal";
 import { matchesSearch } from "../lib/search";
 import type { Row } from "../lib/types";
+import { KpiCards, type Stat } from "./charts";
 import { useChampionshipList } from "./championships";
-import { Icon } from "./shell";
 import {
+  ACTIONS_COLUMN,
   Badge,
   Button,
   Card,
@@ -27,8 +28,8 @@ import {
   Heading,
   IconActions,
   IconButton,
+  Identity,
   Loading,
-  MetricCard,
   Notice,
   Retry,
   useLoad,
@@ -75,6 +76,17 @@ export function ResultBadge({ result }: { result: string }) {
 }
 function RankBadge({ rank }: { rank: number }) {
   return <span className={`rank-badge${rank <= 3 ? ` rank-${rank}` : ""}`}>{rank || "—"}</span>;
+}
+// Completion date with the time underneath.
+function Completed({ value }: { value: string }) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return <>{formatDateTime(value)}</>;
+  return (
+    <span className="date-time">
+      {date.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}
+      <small>{date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</small>
+    </span>
+  );
 }
 
 export function Leaderboard({ championshipId }: { championshipId?: string }) {
@@ -131,14 +143,14 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
   });
   const activeFilters = Object.values(filters).filter(Boolean).length;
   const n = visible.length || 1;
-  const avg = (pick: (r: Attempt) => number) => visible.reduce((t, r) => t + pick(r), 0) / n;
-  const kpis = [
-    { label: "Participants", icon: "users", value: visible.length.toLocaleString(), definition: `of ${ranked.length.toLocaleString()} in this championship` },
-    { label: "Top marks", icon: "trophy", value: visible.length ? `${Math.max(...visible.map((r) => r.marks))}` : "—", definition: visible[0] ? `out of ${visible[0].total_marks}` : "No results" },
-    { label: "Average marks", icon: "chart", value: visible.length ? avg((r) => r.marks).toFixed(1) : "—", definition: "Per participant" },
-    { label: "Average accuracy", icon: "question", value: visible.length ? percent(avg((r) => r.accuracy)) : "—", definition: "Correct ÷ attempted" },
-    { label: "Average time", icon: "dashboard", value: visible.length ? formatDuration(avg((r) => r.time_taken_sec)) : "—", definition: "Per play" },
-    { label: "Pass rate", icon: "file", value: visible.length ? percent((visible.filter((r) => r.result === "Passed").length / n) * 100) : "—", definition: `${PASS_PERCENT}% of total marks to pass` },
+  const passed = visible.filter((r) => r.result === "Passed").length;
+  const completed = visible.filter((r) => r.completed).length;
+  const top = visible.length ? visible.reduce((best, r) => (r.marks > best.marks ? r : best)) : null;
+  const kpis: Stat[] = [
+    { label: "Total participants", value: visible.length.toLocaleString(), definition: activeFilters ? `Matching the filters, of ${ranked.length.toLocaleString()} in this championship.` : undefined },
+    { label: "Completed", value: completed.toLocaleString(), definition: "Participants who answered every question." },
+    { label: "Top score", value: top ? top.marks : "—", suffix: top ? `/ ${top.total_marks}` : undefined, definition: top ? `Highest marks, by ${top.user_name}.` : undefined },
+    { label: "Pass rate", value: visible.length ? percent((passed / n) * 100) : "—", definition: `Completed attempts with at least ${PASS_PERCENT}% of total marks.` },
   ];
 
   return (
@@ -146,7 +158,6 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
       <Heading
         title={championship ? `${championship.champ_name} · Leaderboard` : "Leaderboards"}
         breadcrumb={<Link href="/analytics">← Championship analytics</Link>}
-        description="Ranked by marks, then accuracy, then the faster completion time. Equal on all three shares a rank."
         action={
           championship && (
             <Button variant="secondary" href={`/championships/${encodeURIComponent(selectedId)}`}>
@@ -156,7 +167,7 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
         }
       />
       <Card className="analytics-filters">
-        <div className="filter-grid">
+        <div className="filter-grid filter-primary">
           <label>
             Championship
             <select
@@ -175,6 +186,17 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
               ))}
             </select>
           </label>
+          <label>
+            Participant
+            <input
+              type="search"
+              value={filters.participant}
+              onChange={(e) => update({ participant: e.target.value })}
+              placeholder="Name, email or participant ID"
+            />
+          </label>
+        </div>
+        <div className="filter-grid">
           <label>
             Question set
             <select value={filters.labelId} onChange={(e) => update({ labelId: e.target.value })}>
@@ -200,21 +222,15 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
             </label>
           )}
           <label>
-            Participant
-            <input
-              type="search"
-              value={filters.participant}
-              onChange={(e) => update({ participant: e.target.value })}
-              placeholder="Name, email or participant ID"
-            />
-          </label>
-          <label>
-            From
-            <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => update({ from: e.target.value })} />
-          </label>
-          <label>
-            To
-            <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => update({ to: e.target.value })} />
+            Result
+            <select value={filters.result} onChange={(e) => update({ result: e.target.value })}>
+              <option value="">All results</option>
+              {RESULTS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Rank
@@ -227,27 +243,24 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
             </select>
           </label>
           <label>
-            Result
-            <select value={filters.result} onChange={(e) => update({ result: e.target.value })}>
-              <option value="">All results</option>
-              {RESULTS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
+            From
+            <input type="date" value={filters.from} max={filters.to || undefined} onChange={(e) => update({ from: e.target.value })} />
+          </label>
+          <label>
+            To
+            <input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => update({ to: e.target.value })} />
           </label>
         </div>
-        <div className="filter-footer">
-          <span className="muted" role="status">
-            {activeFilters ? `${activeFilters} ${activeFilters === 1 ? "filter" : "filters"} applied` : "Showing every participant"}
-          </span>
-          {activeFilters > 0 && (
+        {activeFilters > 0 && (
+          <div className="filter-footer">
+            <span className="muted" role="status">
+              {activeFilters} {activeFilters === 1 ? "filter" : "filters"} applied
+            </span>
             <Button size="sm" variant="text" onClick={() => setFilters(EMPTY)}>
               Reset filters
             </Button>
-          )}
-        </div>
+          </div>
+        )}
         {dateError && <Notice kind="error">The start date must be on or before the end date.</Notice>}
       </Card>
       {championships.error ? (
@@ -258,61 +271,59 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
         <Retry error={results.error} onRetry={() => setRevision((v) => v + 1)} />
       ) : (
         <>
-          <section className="metrics analytics-metrics" aria-label="Leaderboard summary">
-            {kpis.map((kpi) => (
-              <MetricCard
-                key={kpi.label}
-                icon={<Icon name={kpi.icon} />}
-                label={kpi.label}
-                value={kpi.value}
-                definition={kpi.definition}
-                loading={results.loading || championships.loading}
-                delta={<small className="delta">{kpi.definition}</small>}
-              />
-            ))}
-          </section>
+          <KpiCards label="Leaderboard summary" stats={kpis} loading={results.loading || championships.loading} />
           <Card>
+            <div className="section-heading">
+              <h2>Rankings</h2>
+              <span className="muted">By marks, then accuracy, then time · ties share a rank</span>
+            </div>
             <DataTable
               key={selectedId}
               rows={visible as unknown as Row[]}
               loading={results.loading || championships.loading}
               searchable={false}
-              sortable={["rank", "user_name", "correct", "incorrect", "marks", "accuracy", "time_taken_sec", "completed_at"]}
+              sortable={["rank", "user_name", "marks", "accuracy", "correct", "time_taken_sec", "completed_at"]}
               defaultSort={{ key: "rank", dir: "asc" }}
               rowKey={(row) => String(row.attempt_id)}
               emptyMessage={activeFilters ? "No participants match these filters" : "No results yet"}
               emptyDescription={activeFilters ? "Reset or widen the filters." : "Results appear here once participants complete this championship."}
               columns={[
                 ["rank", "Rank"],
+                [ACTIONS_COLUMN, "Actions"],
                 ["user_name", "Participant"],
-                ["user_id", "Participant ID"],
-                ["teacher_name", "Teacher"],
-                ["teacher_id", "Teacher ID"],
-                ["label_name", "Question set"],
-                ["correct", "Correct"],
-                ["incorrect", "Incorrect"],
-                ["total_questions", "Total questions"],
                 ["marks", "Marks"],
-                ["total_marks", "Total marks"],
                 ["accuracy", "Accuracy"],
+                ["correct", "Correct"],
                 ["time_taken_sec", "Time taken"],
-                ["completed_at", "Completed"],
                 ["result", "Result"],
+                ["label_name", "Question set"],
+                ...(teacherPortal ? [] : [["teacher_name", "Teacher"] as [string, string]]),
+                ["completed_at", "Completed"],
               ]}
               render={{
                 rank: (row) => <RankBadge rank={Number(row.rank)} />,
                 user_name: (row) => (
-                  <button type="button" className="text-button table-link" onClick={() => setViewing(row as unknown as Attempt)}>
-                    {String(row.user_name)}
-                  </button>
+                  <Identity name={row.user_name} code={row.user_id ? participantCode(row) : null} />
                 ),
-                user_id: (row) => (row.user_id ? <code className="entity-code">{participantCode(row)}</code> : "—"),
-                teacher_name: (row) => String(row.teacher_name || "—"),
-                teacher_id: (row) => (row.teacher_id ? <code className="entity-code">{teacherCode(row)}</code> : "—"),
+                marks: (row) => (
+                  <span className="score-of">
+                    {String(row.marks)}
+                    <small> / {String(row.total_marks)}</small>
+                  </span>
+                ),
+                correct: (row) => (
+                  <span className="score-of">
+                    {String(row.correct)}
+                    <small> / {String(row.total_questions)}</small>
+                  </span>
+                ),
+                teacher_name: (row) => (
+                  <Identity name={row.teacher_name} code={row.teacher_id ? teacherCode(row) : null} />
+                ),
                 label_name: (row) => String(row.label_name || "—"),
                 accuracy: (row) => percent(Number(row.accuracy)),
                 time_taken_sec: (row) => formatDuration(row.time_taken_sec),
-                completed_at: (row) => formatDateTime(row.completed_at),
+                completed_at: (row) => <Completed value={String(row.completed_at || "")} />,
                 result: (row) => <ResultBadge result={String(row.result)} />,
               }}
               actions={(row) => (
@@ -370,8 +381,6 @@ function ParticipantDetails({
     >
       <dl className="details-grid compact">
         {[
-          ["Participant", attempt.user_name],
-          ["Participant ID", participantCode(attempt)],
           ["Email", attempt.user_email || "—"],
           ["Championship", championshipName],
           ["Question set", attempt.label_name || "—"],

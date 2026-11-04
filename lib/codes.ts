@@ -15,6 +15,8 @@ export const questionSetCode = (row: Row) =>
   String(row.label_code || code("QS", row.label_id, 4));
 export const teacherCode = (row: Row) =>
   String(row.teacher_code || code("TCH", row.teacher_id, 4));
+export const questionCode = (row: Row) =>
+  String(row.question_code || code("Q", row.question_id, 5));
 export const participantCode = (row: Row) =>
   String(row.user_code || code("USR", row.user_id, 5));
 

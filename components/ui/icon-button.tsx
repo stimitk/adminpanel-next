@@ -17,6 +17,7 @@ const actionPaths: Record<string, string[]> = {
   approve: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z", "M8 12.5l2.7 2.7L16 9.8"],
   back: ["M19 12H5M11 6l-6 6 6 6"],
   search: ["M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14ZM21 21l-5-5"],
+  filter: ["M4 5h16l-6 7.5V19l-4 1.5v-8L4 5Z"],
   close: ["M6 6l12 12M18 6L6 18"],
   "sort-asc": ["M12 5l-5 6h10l-5-6Z"],
   "sort-desc": ["M12 19l-5-6h10l-5 6Z"],

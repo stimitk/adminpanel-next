@@ -102,12 +102,33 @@ function QuestionCount({ row, kind }: { row: Row; kind: "total" | "display" }) {
   const short = counts.display < counts.perGame;
   return (
     <span className={`question-count${short ? " is-short" : ""}`}>
-      <strong>{counts.display}</strong> per quiz
-      <small>
-        {short
-          ? `Needs ${counts.perGame} · only ${counts.display} usable`
-          : `from ${counts.eligible ?? counts.total} usable`}
-      </small>
+      <strong>{counts.display}</strong>
+      {short && <small>{`Needs ${counts.perGame} · only ${counts.display} usable`}</small>}
+    </span>
+  );
+}
+
+// Date with its time underneath, e.g. "01 Oct 2026" over "09:00 AM".
+function DateTime({ date, time }: { date: unknown; time: unknown }) {
+  const day = dateValue(date);
+  if (!day) return <>—</>;
+  const [y, m, d] = day.split("-").map(Number);
+  const [h, min] = String(time || "").split(":").map(Number);
+  const shown = new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+  const clockTime = Number.isFinite(h) && time
+    ? new Date(2000, 0, 1, h, min || 0).toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "";
+  return (
+    <span className="date-time">
+      {Number.isFinite(y) && m && d ? shown : day}
+      {clockTime && <small>{clockTime}</small>}
     </span>
   );
 }
@@ -197,11 +218,6 @@ export function Championships() {
     <>
       <Heading
         title="Championships"
-        description={
-          admin
-            ? "Manage championships across kGamify."
-            : "Manage the championships you have created."
-        }
         action={
           <Button href="/championships/new">
             Create Championship
@@ -222,12 +238,6 @@ export function Championships() {
         {list.error ? (
           <Retry error={list.error} onRetry={() => setRevision((v) => v + 1)} />
         ) : (
-          <>
-          <p className="muted table-note">
-            <strong>Questions to display</strong> is how many questions each
-            player gets in one quiz. Only usable questions count: those
-            included for live quizzes in their question set and not blocked.
-          </p>
           <DataTable
             rows={rows}
             loading={list.loading}
@@ -262,30 +272,24 @@ export function Championships() {
             rowClassName={(row) => (isBlocked(row) ? "is-blocked" : undefined)}
             render={{
               status: (row) => <ChampionshipStatus row={row} />,
-              champ_name: (row) => (
-                <Link
-                  className="table-link"
-                  href={`/championships/${encodeURIComponent(String(row.champ_id))}`}
-                  title="View championship details"
-                >
-                  {String(row.champ_name || "Untitled championship")}
-                </Link>
-              ),
+              champ_name: (row) => String(row.champ_name || "Untitled championship"),
               champ_code: (row) => <code className="entity-code">{String(row.champ_code)}</code>,
+              start_date: (row) => <DateTime date={row.start_date} time={row.start_time} />,
+              end_date: (row) => <DateTime date={row.end_date} time={row.end_time} />,
               total_questions: (row) => <QuestionCount row={row} kind="total" />,
               questions_to_display: (row) => (
                 <QuestionCount row={row} kind="display" />
               ),
             }}
             columns={[
-              ["champ_code", "Championship ID"],
+              ["status", "Status"],
+              [ACTIONS_COLUMN, "Actions"],
               ["champ_name", "Championship name"],
+              ["champ_code", "Championship ID"],
               ["total_questions", "No. of questions"],
               ["questions_to_display", "Questions to display"],
               ["start_date", "Start date"],
               ["end_date", "End date"],
-              ["status", "Status"],
-              [ACTIONS_COLUMN, "Actions"],
             ]}
             actions={(row) => {
               const id = String(row.champ_id);
@@ -339,16 +343,10 @@ export function Championships() {
                       onClick={() => block(row)}
                     />
                   )}
-                  <IconButton
-                    icon="leaderboard"
-                    label="View leaderboard"
-                    href={`/leaderboard/${path}`}
-                  />
                 </IconActions>
               );
             }}
           />
-          </>
         )}
       </Card>
       {dialog}
@@ -546,6 +544,7 @@ function ExistingChampionshipEditor({ id }: { id: string }) {
 }
 export function ChampionshipDetails({ id }: { id: string }) {
   const [revision, setRevision] = useState(0);
+  const [saved, setSaved] = useState(false);
   const { data, loading, error } = useLoad<Row>(
     `/championships/${encodeURIComponent(id)}`,
     revision,
@@ -569,6 +568,7 @@ export function ChampionshipDetails({ id }: { id: string }) {
           </div>
         }
       />
+      {saved && <Notice kind="success">Championship updated.</Notice>}
       {loading ? (
         <Loading />
       ) : error ? (
@@ -622,9 +622,98 @@ export function ChampionshipDetails({ id }: { id: string }) {
                 ]}
               />
             </Card>
+            {portal.kind === "admin" && (
+              <AdminChampionshipForm
+                key={revision}
+                row={data}
+                onSaved={() => {
+                  setSaved(true);
+                  setRevision((v) => v + 1);
+                }}
+              />
+            )}
           </>
         )
       )}
     </>
+  );
+}
+
+const minutesOf = (value: unknown) => {
+  const [h = 0, m = 0] = String(value || "").split(":").map(Number);
+  return String(h * 60 + m || "");
+};
+const clock = (minutes: number) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:00`;
+
+// Admins can edit every championship field from the details page.
+function AdminChampionshipForm({ row, onSaved }: { row: Row; onSaved: () => void }) {
+  const modes = rowsOf(row.modes);
+  const base = championshipFields.filter((f) =>
+    ["champName", "categoryId", "startDate", "startTime", "endDate", "endTime", "labelIds"].includes(f.name),
+  );
+  const modeFields = modes.flatMap((_, i) => {
+    const suffix = modes.length > 1 ? ` (${i + 1})` : "";
+    return [
+      { name: `mode${i}Name`, label: `Game mode${suffix}`, required: true, maxLength: 100 },
+      { name: `mode${i}Questions`, label: `Number of questions${suffix}`, type: "number" as const, required: true, min: 1, max: 100 },
+      { name: `mode${i}Duration`, label: `Duration (minutes)${suffix}`, type: "number" as const, required: true, min: 1, max: 1439 },
+      { name: `mode${i}Description`, label: `Game description${suffix}`, type: "textarea" as const },
+    ];
+  });
+  const initial: Record<string, unknown> = {
+    champName: row.champ_name,
+    categoryId: row.category_id,
+    startDate: dateValue(row.start_date),
+    endDate: dateValue(row.end_date),
+    startTime: row.start_time,
+    endTime: row.end_time,
+    labelIds: Array.isArray(row.label_ids) ? row.label_ids : [],
+  };
+  modes.forEach((mode, i) => {
+    initial[`mode${i}Name`] = mode.mode_name;
+    initial[`mode${i}Questions`] = mode.no_of_question;
+    initial[`mode${i}Duration`] = minutesOf(mode.time_minutes);
+    initial[`mode${i}Description`] = mode.description;
+  });
+  return (
+    <Card style={{ marginTop: 20 }}>
+      <h2 style={{ margin: "0 0 16px" }}>Edit Championship</h2>
+      <Form
+        fields={[...base, ...modeFields]}
+        initial={initial}
+        submitLabel="Save changes"
+        secondaryAction={
+          <Link className="button secondary" href="/championships">
+            Cancel
+          </Link>
+        }
+        onSubmit={async (values) => {
+          const start = `${values.startDate}T${values.startTime}`;
+          const end = `${values.endDate}T${values.endTime}`;
+          if (end <= start) throw new Error("The end date and time must be after the start.");
+          await api(`/admin/championships/${encodeURIComponent(String(row.champ_id))}`, {
+            method: "PUT",
+            body: {
+              champName: String(values.champName).replace(/\s+/g, " "),
+              categoryId: values.categoryId,
+              startDate: values.startDate,
+              endDate: values.endDate,
+              startTime: values.startTime,
+              endTime: values.endTime,
+              labelIds: values.labelIds || [],
+              modes: modes.map((mode, i) => ({
+                modeId: mode.mode_id,
+                modeName: values[`mode${i}Name`],
+                description: values[`mode${i}Description`] || "",
+                noOfQuestions: values[`mode${i}Questions`],
+                timeMinutes: clock(Number(values[`mode${i}Duration`])),
+              })),
+            },
+          });
+          onSaved();
+        }}
+      />
+    </Card>
   );
 }

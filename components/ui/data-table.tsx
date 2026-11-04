@@ -26,6 +26,11 @@ export interface DataTableProps {
   emptyMessage?: string;
   emptyDescription?: ReactNode;
   searchPlaceholder?: string;
+  // Custom search test per row, instead of matching the column text.
+  searchMatch?: (row: Row, query: string) => boolean;
+  // Server-side search: the page owns the query and passes matching rows.
+  search?: string;
+  onSearchChange?: (value: string) => void;
   // Custom cell content by column key; search still matches the raw row value.
   render?: Record<string, (row: Row) => ReactNode>;
   rowClassName?: (row: Row) => string | undefined;
@@ -78,6 +83,9 @@ export function DataTable({
   emptyMessage,
   emptyDescription,
   searchPlaceholder = "Search…",
+  searchMatch,
+  search: serverSearch,
+  onSearchChange,
   render,
   rowClassName,
   selection,
@@ -91,7 +99,9 @@ export function DataTable({
   toolbar,
   rowKey,
 }: DataTableProps) {
-  const [search, setSearch] = useState("");
+  const [localSearch, setLocalSearch] = useState("");
+  const search = onSearchChange ? (serverSearch ?? "") : localSearch;
+  const setSearch = onSearchChange ?? setLocalSearch;
   const [sort, setSort] = useState<SortState | null>(defaultSort || null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(initialPageSize);
@@ -111,19 +121,22 @@ export function DataTable({
     key !== SERIAL_COLUMN &&
     (sortable === true || !!sortable?.includes(key));
 
-  if (loading) {
+  // With server search, keep the search box mounted (and focused) while loading.
+  if (loading && !onSearchChange) {
     return <SkeletonTable rows={5} columns={span} />;
   }
 
-  const matched = search
-    ? rows.filter((row) =>
+  const matched = !search.trim() || onSearchChange
+    ? rows
+    : searchMatch
+    ? rows.filter((row) => searchMatch(row, search))
+    : rows.filter((row) =>
         dataColumns.some(([key]) =>
           (isRichColumn(key) ? plainRichText(row[key]) : display(row[key]))
             .toLowerCase()
-            .includes(search.toLowerCase()),
+            .includes(search.trim().toLowerCase()),
         ),
-      )
-    : rows;
+      );
   const sorted = sort
     ? [...matched].sort((a, b) => {
         const value = (row: Row) =>
@@ -225,12 +238,18 @@ export function DataTable({
             </label>
           )}
           {toolbar && <div className="table-toolbar-extra">{toolbar}</div>}
-          <span>
-            {sorted.length.toLocaleString()}{" "}
-            {sorted.length === 1 ? "record" : "records"}
-          </span>
+          {!loading && (
+            <span>
+              {sorted.length.toLocaleString()}{" "}
+              {sorted.length === 1 ? "record" : "records"}
+            </span>
+          )}
         </div>
       )}
+      {loading ? (
+        <SkeletonTable rows={5} columns={span} />
+      ) : (
+      <>
       <div className="table-scroll">
         <table>
           <thead>
@@ -388,6 +407,8 @@ export function DataTable({
             setPage(1);
           }}
         />
+      )}
+      </>
       )}
     </>
   );

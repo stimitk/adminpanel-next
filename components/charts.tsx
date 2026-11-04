@@ -1,6 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
-import { Tooltip } from "./ui";
+import { Skeleton, Tooltip } from "./ui";
 
 // Lightweight, dependency-free charts in the panel's visual language.
 // Series colours are validated for colour-vision deficiency (see globals.css
@@ -119,14 +119,18 @@ export function StackedBarList({
   );
 }
 
-// Daily columns for a count over time.
+// Daily columns for a count over time, with the first and last dates under the axis.
 export function ColumnChart({
   points,
   label,
+  start,
+  end,
   empty = "No activity in this date range.",
 }: {
   points: { key: string; value: number; tooltip: string }[];
   label: string;
+  start?: string;
+  end?: string;
   empty?: string;
 }) {
   if (!points.length) return <p className="muted chart-empty">{empty}</p>;
@@ -143,6 +147,52 @@ export function ColumnChart({
           </Tooltip>
         ))}
       </div>
+      {(start || end) && (
+        <figcaption className="column-axis">
+          <span>{start}</span>
+          <span>{end}</span>
+        </figcaption>
+      )}
     </figure>
+  );
+}
+
+export type Stat = {
+  label: string;
+  value: ReactNode;
+  // Unit or base shown small after the value, e.g. "/ 20".
+  suffix?: ReactNode;
+  // How the figure is calculated; shown on hover of the label.
+  definition?: string;
+};
+
+// A single row of equal key-figure cards: label and value only.
+export function KpiCards({
+  label,
+  stats,
+  loading = false,
+}: {
+  label: string;
+  stats: Stat[];
+  loading?: boolean;
+}) {
+  return (
+    <dl className="kpi-row" aria-label={label} aria-busy={loading}>
+      {stats.map((stat) => (
+        <div className="kpi-card" key={stat.label}>
+          <dt title={stat.definition}>{stat.label}</dt>
+          <dd>
+            {loading ? (
+              <Skeleton width="60%" height="28px" />
+            ) : (
+              <>
+                {stat.value}
+                {stat.suffix && <small> {stat.suffix}</small>}
+              </>
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }

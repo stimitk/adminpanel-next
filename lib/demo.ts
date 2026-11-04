@@ -3,7 +3,8 @@ import { demoCredentials } from "./demo-config";
 import { isBlocked, isIncludedInLive, isLiveEligible } from "./questions";
 import { codeNumber, questionSetCode, teacherCode } from "./codes";
 import { demoCategories, generateDemoData, seeded, shuffle } from "./demo-data";
-import { matchesSearch } from "./search";
+import { matchesRecord, matchesSearch, type RecordSearchField } from "./search";
+import { championshipLabelIds, championshipPhase } from "./championships";
 
 let categories: Row[] = [
   { category_id: 1, category_name: "Science & Technology", status: 1 },
@@ -443,6 +444,17 @@ export function demoRequest(
       );
       data = (limit ? list.slice(0, limit) : list).map(withQuestionCount);
     } else data = { labelId: labels[labels.length - 1].label_id };
+  } else if (/^\/questions\/labels\/[^/]+$/.test(route) && method === "PUT") {
+    const row = labelOf(route.split("/").pop());
+    if (!row) throw new Error("Demo question set not found.");
+    const name = String(input.labelName || "").trim();
+    if (name.length < 2 || name.length > 50)
+      throw new Error("Question set name must be 2 to 50 characters.");
+    row.label_name = name;
+    if ("bankName" in input) row.bank_name = String(input.bankName || "").trim() || null;
+    for (const q of questions)
+      if (String(q.label_id) === String(row.label_id)) q.label_name = name;
+    data = { updated: true };
   } else if (route === "/questions/analytics/frequent-errors")
     data = [
       {
@@ -460,20 +472,23 @@ export function demoRequest(
       liveState = params.get("liveState"),
       keyword = params.get("q") || "",
       field = params.get("field") || "all",
-      liveOnly = params.get("includeInLive") === "true";
-    // `q` searches bank, teacher name/ID and set name (or one of them via `field`).
+      liveOnly = params.get("includeInLive") === "true",
+      liveChampionship = params.get("liveChampionship");
+    // Sets used by a championship that is live today.
+    const liveSets = new Set(
+      championships.filter((c) => championshipPhase(c) === "Live").flatMap(championshipLabelIds),
+    );
+    // `q` searches set name/ID, teacher name/ID and bank (or one of them via `field`).
     const keywordMatches = (row: Row) =>
-      !keyword ||
-      ((field === "all" || field === "bank") && matchesSearch(row.bank_name, keyword)) ||
-      ((field === "all" || field === "teacher") && matchesSearch(row.teacher_name, keyword)) ||
-      ((field === "all" || field === "teacherId") && teacherMatches({ teacher_id: row.teacher_id, teacher_name: "" }, keyword)) ||
-      ((field === "all" || field === "set") && setMatches(row, keyword));
+      matchesRecord(row, keyword, field as RecordSearchField);
     const filtered = questions.map(withSet).filter(
       (q) =>
         (!questionId || String(q.question_id) === questionId) &&
         (!label || String(q.label_id) === label) &&
         (!teacher || String(q.teacher_id) === teacher) &&
         (!liveOnly || isLiveEligible(q)) &&
+        (!liveChampionship ||
+          (liveChampionship === "yes") === liveSets.has(String(q.label_id))) &&
         (!liveState ||
           (liveState === "blocked"
             ? isBlocked(q)
@@ -650,6 +665,34 @@ export function demoRequest(
       if (name.length < 2 || name.length > 100)
         throw new Error("Championship name must be 2 to 100 characters.");
       row.champ_name = name;
+      const keys: Record<string, string> = {
+        categoryId: "category_id",
+        startDate: "start_date",
+        endDate: "end_date",
+        startTime: "start_time",
+        endTime: "end_time",
+        labelIds: "label_ids",
+      };
+      for (const [k, v] of Object.entries(input)) if (keys[k]) row[keys[k]] = v;
+      if (input.categoryId !== undefined)
+        row.category_name = categories.find(
+          (c) => String(c.category_id) === String(input.categoryId),
+        )?.category_name;
+      if (Array.isArray(input.modes))
+        row.modes = ((row.modes || []) as Row[]).map((mode) => {
+          const next = (input.modes as Row[]).find(
+            (m) => String(m.modeId) === String(mode.mode_id),
+          );
+          return next
+            ? {
+                ...mode,
+                mode_name: next.modeName,
+                description: next.description,
+                no_of_question: next.noOfQuestions,
+                time_minutes: next.timeMinutes,
+              }
+            : mode;
+        });
       data = { updated: true };
     } else if (/^championships\/[^/]+\/status$/.test(key)) {
       const row = findChampionship(key.split("/")[1]);

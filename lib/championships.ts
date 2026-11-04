@@ -1,4 +1,5 @@
 import { rowsOf } from "./api";
+import { isBlocked } from "./questions";
 import type { Row } from "./types";
 
 function count(value: unknown): number | null {
@@ -22,4 +23,26 @@ export function championshipQuestionCounts(row: Row) {
   const display =
     perGame === null ? null : eligible === null ? perGame : Math.min(perGame, eligible);
   return { total, eligible, perGame, display };
+}
+
+// Question sets a championship draws from (championship-level and per game mode).
+export function championshipLabelIds(row: Row): string[] {
+  return [
+    ...new Set([
+      ...((Array.isArray(row.label_ids) ? row.label_ids : []) as unknown[]).map(String),
+      ...rowsOf(row.modes).flatMap((m) => ((m.label_ids || m.labelIds || []) as unknown[]).map(String)),
+    ]),
+  ];
+}
+
+export type ChampionshipPhase = "Live" | "Scheduled" | "Ended" | "Inactive" | "Blocked";
+// Live: active, not blocked and today is within its dates.
+export function championshipPhase(row: Row, today = new Date().toISOString().slice(0, 10)): ChampionshipPhase {
+  if (isBlocked(row)) return "Blocked";
+  if (Number(row.status) !== 1) return "Inactive";
+  const start = String(row.start_date || "").slice(0, 10);
+  const end = String(row.end_date || "").slice(0, 10);
+  if (end && end < today) return "Ended";
+  if (start && start > today) return "Scheduled";
+  return "Live";
 }

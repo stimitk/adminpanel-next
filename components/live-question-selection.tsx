@@ -4,7 +4,15 @@ import { api, errorText } from "../lib/api";
 import { isBlocked, isIncludedInLive, questionBody } from "../lib/questions";
 import { plainRichText } from "../lib/rich-text";
 import type { Row } from "../lib/types";
-import { Button, DataTable, Loading, Notice, Retry, useLoad } from "./ui";
+import {
+  Button,
+  DataTable,
+  Loading,
+  Notice,
+  Retry,
+  useDebounced,
+  useLoad,
+} from "./ui";
 
 type Change = { row: Row; include: boolean };
 
@@ -22,6 +30,9 @@ export function LiveQuestionSelection({
   onDirtyChange: (dirty: boolean) => void;
 }) {
   const [page, setPage] = useState(1);
+  const [text, setText] = useState("");
+  const search = useDebounced(text.trim(), 350);
+  const [ready, setReady] = useState(false);
   const [saved, setSaved] = useState(0);
   const [changes, setChanges] = useState<Record<string, Change>>({});
   const [saving, setSaving] = useState(false);
@@ -31,13 +42,25 @@ export function LiveQuestionSelection({
   } | null>(null);
   const loadRevision = revision + saved;
   const questions = useLoad<{ questions: Row[]; total: number }>(
-    `/questions/?${new URLSearchParams({ labelId: setId, page: String(page), limit: "20" })}`,
+    `/questions/?${new URLSearchParams({ labelId: setId, page: String(page), limit: "20", ...(search ? { search } : {}) })}`,
     loadRevision,
   );
   const included = useLoad<{ total: number }>(
     `/questions/?${new URLSearchParams({ labelId: setId, includeInLive: "true", page: "1", limit: "1" })}`,
     loadRevision,
   );
+  // While searching, the set's full size still comes from an unfiltered count.
+  const all = useLoad<{ total: number }>(
+    search
+      ? `/questions/?${new URLSearchParams({ labelId: setId, page: "1", limit: "1" })}`
+      : null,
+    loadRevision,
+  );
+  // Search the whole set on the server, starting again from page 1.
+  useEffect(() => setPage(1), [search]);
+  useEffect(() => {
+    if (questions.data) setReady(true);
+  }, [questions.data]);
   const pending = Object.values(changes);
   const dirty = pending.length > 0;
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
@@ -49,6 +72,7 @@ export function LiveQuestionSelection({
   }, [dirty]);
 
   const total = Number(questions.data?.total || 0);
+  const setTotal = search ? Number(all.data?.total || 0) : total;
   const includedTotal =
     Number(included.data?.total || 0) +
     pending.reduce((sum, change) => sum + (change.include ? 1 : -1), 0);
@@ -129,7 +153,7 @@ export function LiveQuestionSelection({
     setSaved((v) => v + 1);
   }
 
-  if (questions.loading && !questions.data) return <Loading />;
+  if (!ready && questions.loading) return <Loading />;
   if (questions.error)
     return (
       <Retry error={questions.error} onRetry={() => setSaved((v) => v + 1)} />
@@ -155,7 +179,7 @@ export function LiveQuestionSelection({
         <span role="status">
           {included.loading
             ? "Counting included questions…"
-            : `${Math.max(0, includedTotal)} of ${total} questions will be used in live quizzes`}
+            : `${Math.max(0, includedTotal)} of ${setTotal} questions will be used in live quizzes`}
           {dirty &&
             ` · ${pending.length} unsaved ${pending.length === 1 ? "change" : "changes"}`}
         </span>
@@ -182,6 +206,9 @@ export function LiveQuestionSelection({
       <DataTable
         rows={rows}
         loading={questions.loading}
+        search={text}
+        onSearchChange={setText}
+        searchPlaceholder="Search question text"
         selection={{
           title: "Include",
           selected: checked,
@@ -212,7 +239,7 @@ export function LiveQuestionSelection({
           Previous
         </button>
         <span>
-          Page {page} · {total} questions
+          Page {page} · {total} {search ? "matching " : ""}questions
         </span>
         <button
           className="secondary"

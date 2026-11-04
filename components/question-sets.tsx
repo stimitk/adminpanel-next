@@ -1,29 +1,37 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, rowsOf } from "../lib/api";
+import { api, errorText, rowsOf } from "../lib/api";
+import { portal } from "../lib/portal";
 import { championshipCode, questionSetCode, teacherCode } from "../lib/codes";
-import { isBlocked } from "../lib/questions";
+import { championshipLabelIds } from "../lib/championships";
+import { matchesRecord } from "../lib/search";
 import { questionFields } from "../lib/resources";
 import type { Row } from "../lib/types";
 import dynamic from "next/dynamic";
 import { useChampionshipList } from "./championships";
 import { LiveQuestionSelection } from "./live-question-selection";
+import { loadTeachers } from "./pickers";
 import {
-  Badge,
+  ACTIONS_COLUMN,
   Button,
   Card,
   DataTable,
+  EntityPicker,
   Form,
   Heading,
   IconActions,
   IconButton,
   Loading,
+  Modal,
   Notice,
   Retry,
+  SearchFilterBar,
   StatusBadge,
   useLoad,
+  type FilterChip,
+  type PickerOption,
 } from "./ui";
 
 const BulkImport = dynamic(
@@ -43,7 +51,14 @@ type Tab = "questions" | "manual" | "import";
 const setPath = (id: unknown, tab?: Tab) =>
   `/labels/${encodeURIComponent(String(id))}${tab && tab !== "questions" ? `?tab=${tab}` : ""}`;
 
-// Main listing: serial number, name and a View action, nothing more.
+const SET_STATUSES = [
+  ["", "Any status"],
+  ["active", "Active"],
+  ["inactive", "Inactive"],
+] as const;
+const isActiveSet = (row: Row) => Number(row.status ?? 1) === 1;
+
+// Main listing. Set and teacher IDs tell apart sets or teachers with the same name.
 export function QuestionSets({
   create = false,
   importFirst = false,
@@ -54,8 +69,50 @@ export function QuestionSets({
   const router = useRouter();
   const [revision, setRevision] = useState(0);
   const [creating, setCreating] = useState(create);
+  const [keyword, setKeyword] = useState("");
+  const [teacher, setTeacher] = useState<PickerOption | null>(null);
+  const [status, setStatus] = useState("");
+  const [championshipId, setChampionshipId] = useState("");
   const labels = useLoad<unknown>("/questions/labels", revision);
-  const sets = rowsOf(labels.data);
+  // Championships pick their question sets, so a set can be filtered by championship.
+  const championships = useChampionshipList(0);
+  const championship = championships.rows.find((c) => String(c.champ_id) === championshipId);
+  const championshipSets = championship ? championshipLabelIds(championship) : null;
+  const sets = rowsOf(labels.data).map((row): Row => {
+    const teacher = { teacher_id: row.teacher_id ?? row.created_by, teacher_code: row.teacher_code };
+    return {
+      ...row,
+      teacher_id: teacher.teacher_id,
+      label_code: questionSetCode(row),
+      teacher_code: teacher.teacher_id ? teacherCode(teacher) : null,
+    };
+  });
+  // Search and every filter apply together.
+  const visible = sets.filter(
+    (row) =>
+      matchesRecord(row, keyword, "all") &&
+      (!teacher || String(row.teacher_id) === teacher.value) &&
+      (!status || isActiveSet(row) === (status === "active")) &&
+      (!championshipSets || championshipSets.includes(String(row.label_id))),
+  );
+  const chips: FilterChip[] = [
+    ...(keyword.trim() ? [{ key: "keyword", label: `Search: “${keyword.trim()}”`, clear: () => setKeyword("") }] : []),
+    ...(teacher
+      ? [{ key: "teacher", label: `Teacher: ${teacher.label} (${teacher.detail?.split(" · ")[0]})`, clear: () => setTeacher(null) }]
+      : []),
+    ...(status
+      ? [{ key: "status", label: `Status: ${SET_STATUSES.find(([v]) => v === status)?.[1]}`, clear: () => setStatus("") }]
+      : []),
+    ...(championship
+      ? [{ key: "championship", label: `Championship: ${championship.champ_name} (${championshipCode(championship)})`, clear: () => setChampionshipId("") }]
+      : []),
+  ];
+  const filterCount = [teacher, status, championshipId].filter(Boolean).length;
+  const clearFilters = () => {
+    setTeacher(null);
+    setStatus("");
+    setChampionshipId("");
+  };
   if (creating)
     return (
       <QuestionSetWizard
@@ -70,7 +127,6 @@ export function QuestionSets({
     <>
       <Heading
         title="Question Sets"
-        description="Open a set to see its details, linked championships and questions."
         action={<Button onClick={() => setCreating(true)}>New question set</Button>}
       />
       {importFirst && (
@@ -80,24 +136,85 @@ export function QuestionSets({
         </Notice>
       )}
       <Card>
+        <SearchFilterBar
+          value={keyword}
+          onChange={setKeyword}
+          label="Search question sets"
+          placeholder="Search by set name or ID, teacher name or ID, or bank"
+          chips={chips}
+          filterCount={filterCount}
+          onClearFilters={clearFilters}
+          onClearAll={() => {
+            setKeyword("");
+            clearFilters();
+          }}
+        >
+          {portal.kind === "admin" && (
+            <EntityPicker
+              label="Teacher"
+              placeholder="Name or teacher ID"
+              value={teacher}
+              onChange={setTeacher}
+              load={loadTeachers}
+            />
+          )}
+          <label>
+            Set status
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              {SET_STATUSES.map(([value, name]) => (
+                <option key={value} value={value}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Championship
+            <select
+              value={championshipId}
+              disabled={championships.loading}
+              onChange={(e) => setChampionshipId(e.target.value)}
+            >
+              <option value="">{championships.loading ? "Loading…" : "Any championship"}</option>
+              {championships.rows.map((c) => (
+                <option key={String(c.champ_id)} value={String(c.champ_id)}>
+                  {String(c.champ_name)} ({championshipCode(c)})
+                </option>
+              ))}
+            </select>
+          </label>
+        </SearchFilterBar>
         {labels.error ? (
           <Retry error={labels.error} onRetry={() => setRevision((v) => v + 1)} />
         ) : (
           <DataTable
-            rows={sets}
+            rows={visible}
             loading={labels.loading}
             serial
-            searchPlaceholder="Search question sets"
-            sortable={["label_name"]}
-            emptyMessage="No question sets yet"
-            emptyDescription="Create a question set to get started."
-            columns={[["label_name", "Question set name"]]}
+            searchable={false}
+            sortable={["label_name", "label_code", "teacher_name", "teacher_code"]}
+            sortValue={{
+              label_code: (row) => Number(row.label_id) || String(row.label_code),
+              teacher_code: (row) => Number(row.teacher_id) || String(row.teacher_code ?? ""),
+            }}
+            emptyMessage={chips.length ? "No question sets match your search" : "No question sets yet"}
+            emptyDescription={
+              chips.length ? "Try other words or clear the filters." : "Create a question set to get started."
+            }
+            columns={[
+              [ACTIONS_COLUMN, "Actions"],
+              ["label_name", "Question set name"],
+              ["label_code", "Set ID"],
+              ["teacher_name", "Teacher name"],
+              ["teacher_code", "Teacher ID"],
+              ["status", "Status"],
+            ]}
             render={{
-              label_name: (row) => (
-                <Link className="table-link" href={setPath(row.label_id, importFirst ? "import" : undefined)}>
-                  {String(row.label_name || "Untitled set")}
-                </Link>
-              ),
+              label_name: (row) => String(row.label_name || "Untitled set"),
+              label_code: (row) => <code className="entity-code">{String(row.label_code)}</code>,
+              teacher_code: (row) =>
+                row.teacher_code ? <code className="entity-code">{String(row.teacher_code)}</code> : "—",
+              status: (row) => <StatusBadge status={isActiveSet(row) ? 1 : 0} />,
             }}
             actions={(row) => (
               <IconActions>
@@ -120,12 +237,6 @@ function initialTab(): Tab {
   const tab = new URLSearchParams(window.location.search).get("tab");
   return tab === "manual" || tab === "import" ? tab : "questions";
 }
-const championshipLabelIds = (c: Row) =>
-  [
-    ...((Array.isArray(c.label_ids) ? c.label_ids : []) as unknown[]).map(String),
-    ...rowsOf(c.modes).flatMap((m) => ((m.label_ids || m.labelIds || []) as unknown[]).map(String)),
-  ];
-
 // Everything about one question set, plus its question workspace.
 export function QuestionSetDetails({ id }: { id: string }) {
   const router = useRouter();
@@ -136,11 +247,11 @@ export function QuestionSetDetails({ id }: { id: string }) {
   const [questionMessage, setQuestionMessage] = useState("");
   const [created, setCreated] = useState(false);
   const [selectionDirty, setSelectionDirty] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [edited, setEdited] = useState(false);
   const labels = useLoad<unknown>("/questions/labels", labelsRevision);
-  const championships = useChampionshipList(labelsRevision);
   const sets = rowsOf(labels.data);
-  const index = sets.findIndex((row) => String(row.label_id) === id);
-  const current = index >= 0 ? sets[index] : null;
+  const current = sets.find((row) => String(row.label_id) === id) ?? null;
   const name = String(current?.label_name || "this question set");
   useEffect(() => {
     setCreated(new URLSearchParams(window.location.search).get("created") === "1");
@@ -156,24 +267,10 @@ export function QuestionSetDetails({ id }: { id: string }) {
     return true;
   };
   const refresh = () => setQuestionsRevision((v) => v + 1);
-  const linked = championships.rows.filter((c) => championshipLabelIds(c).includes(id));
   const teacher = {
     teacher_id: current?.teacher_id ?? current?.created_by,
     teacher_name: current?.teacher_name,
   };
-  // One row per linked championship; a set without one still gets a row.
-  const associations: Row[] = (linked.length ? linked : [null]).map((c) => ({
-    association_id: c ? String(c.champ_id) : "none",
-    label_code: current ? questionSetCode(current) : "—",
-    label_name: current?.label_name,
-    teacher_code: teacher.teacher_id ? teacherCode(teacher) : null,
-    teacher_name: teacher.teacher_name,
-    champ_id: c?.champ_id,
-    champ_code: c ? championshipCode(c) : null,
-    champ_name: c?.champ_name ?? "Not linked to a championship",
-    status: c?.status,
-    blocked: c ? isBlocked(c) : false,
-  }));
 
   if (labels.loading) return <Loading />;
   if (labels.error)
@@ -200,92 +297,59 @@ export function QuestionSetDetails({ id }: { id: string }) {
         }
         badge={<StatusBadge status={current.status ?? 1} />}
         action={
-          <Button
-            variant="secondary"
-            onClick={() => leave() && router.push("/labels")}
-          >
-            Back to list
-          </Button>
+          <div className="dashboard-actions">
+            {portal.kind === "admin" && (
+              <Button variant="secondary" onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              onClick={() => leave() && router.push("/labels")}
+            >
+              Back to list
+            </Button>
+          </div>
         }
       />
       {created && <Notice kind="success">Question set is ready.</Notice>}
+      {edited && <Notice kind="success">Question set details updated.</Notice>}
+      {editing && (
+        <EditQuestionSet
+          row={current}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            setEdited(true);
+            setLabelsRevision((v) => v + 1);
+            refresh();
+          }}
+        />
+      )}
       <Card>
-        <dl className="details-grid">
-          {[
-            ["Serial number", index + 1],
-            ["Question set ID", questionSetCode(current)],
-            ["Question set name", current.label_name],
-            ["Teacher ID", teacher.teacher_id ? teacherCode(teacher) : "—"],
-            ["Teacher name", teacher.teacher_name || "—"],
-            ["Question bank", current.bank_name || "—"],
-            ["Questions", current.question_count ?? "—"],
-            ["Linked championships", championships.loading ? "…" : linked.length],
-          ].map(([label, value]) => (
-            <div key={String(label)}>
-              <dt>{String(label)}</dt>
-              <dd>{String(value ?? "—")}</dd>
-            </div>
-          ))}
+        <dl className="details-grid set-summary">
+          <div>
+            <dt>Question set ID</dt>
+            <dd>
+              <code className="entity-code">{questionSetCode(current)}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>Teacher</dt>
+            <dd>
+              {String(teacher.teacher_name || "—")}
+              {teacher.teacher_id ? <small>{teacherCode(teacher)}</small> : null}
+            </dd>
+          </div>
+          <div>
+            <dt>Question bank</dt>
+            <dd>{String(current.bank_name || "—")}</dd>
+          </div>
+          <div>
+            <dt>Questions</dt>
+            <dd>{String(current.question_count ?? "—")}</dd>
+          </div>
         </dl>
-      </Card>
-      <Card style={{ marginTop: 20 }}>
-        <div className="section-heading">
-          <h2>Associated championships</h2>
-        </div>
-        {championships.error ? (
-          <Retry error={championships.error} onRetry={() => setLabelsRevision((v) => v + 1)} />
-        ) : (
-          <DataTable
-            rows={associations}
-            loading={championships.loading}
-            serial
-            searchable={false}
-            rowKey={(row) => String(row.association_id)}
-            columns={[
-              ["label_code", "Question set ID"],
-              ["label_name", "Question set name"],
-              ["teacher_code", "Teacher ID"],
-              ["teacher_name", "Teacher name"],
-              ["champ_code", "Championship ID"],
-              ["champ_name", "Championship name"],
-              ["status", "Status"],
-            ]}
-            render={{
-              label_code: (row) => <code className="entity-code">{String(row.label_code)}</code>,
-              teacher_code: (row) =>
-                row.teacher_code ? <code className="entity-code">{String(row.teacher_code)}</code> : "—",
-              champ_code: (row) =>
-                row.champ_code ? <code className="entity-code">{String(row.champ_code)}</code> : "—",
-              status: (row) =>
-                row.champ_id === undefined ? (
-                  <Badge variant="neutral">Unassigned</Badge>
-                ) : (
-                  <div className="status-stack">
-                    <StatusBadge status={row.status} />
-                    {Boolean(row.blocked) && <Badge variant="suspended">Blocked</Badge>}
-                  </div>
-                ),
-            }}
-            actions={(row) =>
-              row.champ_id === undefined ? (
-                <span className="muted">—</span>
-              ) : (
-                <IconActions>
-                  <IconButton
-                    icon="view"
-                    label="View championship"
-                    href={`/championships/${encodeURIComponent(String(row.champ_id))}`}
-                  />
-                  <IconButton
-                    icon="leaderboard"
-                    label="View leaderboard for this set"
-                    href={`/leaderboard/${encodeURIComponent(String(row.champ_id))}?labelId=${encodeURIComponent(id)}`}
-                  />
-                </IconActions>
-              )
-            }
-          />
-        )}
       </Card>
       <section className="paper question-set-content" style={{ marginTop: 20 }}>
         <h2>Questions</h2>
@@ -354,5 +418,79 @@ export function QuestionSetDetails({ id }: { id: string }) {
         )}
       </section>
     </>
+  );
+}
+
+function EditQuestionSet({
+  row,
+  onClose,
+  onSaved,
+}: {
+  row: Row;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(String(row.label_name || ""));
+  const [bank, setBank] = useState(String(row.bank_name || ""));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    const labelName = name.trim().replace(/\s+/g, " ");
+    if (labelName.length < 2 || labelName.length > 50) {
+      setError("Use between 2 and 50 characters for the name.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/questions/labels/${encodeURIComponent(String(row.label_id))}`, {
+        method: "PUT",
+        body: { labelName, bankName: bank.trim() || null },
+      });
+      onSaved();
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal isOpen onClose={() => !busy && onClose()} title="Edit question set">
+      <form onSubmit={submit}>
+        {error && <Notice kind="error">{error}</Notice>}
+        <div className="field">
+          <label htmlFor="edit-set-name">Question set name</label>
+          <input
+            id="edit-set-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            minLength={2}
+            maxLength={50}
+            required
+            autoFocus
+            disabled={busy}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="edit-set-bank">Question bank</label>
+          <input
+            id="edit-set-bank"
+            value={bank}
+            onChange={(event) => setBank(event.target.value)}
+            maxLength={100}
+            disabled={busy}
+          />
+        </div>
+        <div className="form-actions">
+          <Button type="submit" loading={busy} disabled={busy}>
+            {busy ? "Saving…" : "Save changes"}
+          </Button>
+          <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

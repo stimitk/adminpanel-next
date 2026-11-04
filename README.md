@@ -71,7 +71,7 @@ The choice is stored per question as `includeInLive` (sent with the question's c
 
 The Championships table shows **S.No.**, **Championship ID**, name, **No. of questions**, **Questions to display**, start and end dates, status, and icon actions (view, edit, activate/deactivate, block/unblock, leaderboard). It can be filtered by status (Active, Inactive, Blocked, Completed), searched, sorted and paged. Total questions comes from `total_questions` on each row (every question in the linked sets). Questions to display is the per-game number capped by `eligible_questions` (included and not blocked); a warning shows when there are not enough.
 
-Admins load every championship from `GET /admin/championships`, including inactive and blocked ones. They can rename (`PUT /admin/championships/:id` with `{ champName }`), activate/deactivate (`PATCH /admin/championships/:id/status` with `{ status: 0 | 1 }`) and block/unblock (`PATCH /admin/championships/:id/block` with `{ blocked }`) any championship. If the service returns 404 for the list, the panel falls back to the active feed and hides these controls.
+Admins load every championship from `GET /admin/championships`, including inactive and blocked ones. They can rename from the list (`PUT /admin/championships/:id` with `{ champName }`), edit every field from the championship's View page (the same `PUT` with `champName`, `categoryId`, `startDate`, `endDate`, `startTime`, `endTime`, `labelIds` and `modes: [{ modeId, modeName, description, noOfQuestions, timeMinutes }]`), activate/deactivate (`PATCH /admin/championships/:id/status` with `{ status: 0 | 1 }`) and block/unblock (`PATCH /admin/championships/:id/block` with `{ blocked }`) any championship. If the service returns 404 for the list, the panel falls back to the active feed and hides these controls.
 
 In the Question Bank, admins can block/unblock questions (`PATCH /admin/questions/:id/block` with `{ blocked }`). Blocked items carry `is_blocked` and are marked with a red **Blocked** badge. The backend must keep blocked questions out of live quizzes and out of `includeInLive=true` results, keep blocked championships out of public feeds and refuse to open them or accept participation, and refuse teacher activation while a championship is blocked.
 
@@ -83,19 +83,22 @@ Tables show readable IDs: championships `CH-00012`, question sets `QS-0042`, tea
 
 ## Question sets
 
-The Question Sets list shows only S.No., the set name and a View action. View opens `/labels/:id`, which shows the set ID, teacher ID and name, bank, question count, and a table of associated championships (from `label_ids` on championship rows). The questions, add-question and import tabs that used to be on the list page are now on this page. `/labels/:id?tab=import` opens the import tab. `/questions/import` now shows the list and asks you to choose the set to import into. Teacher and bank details come from `teacher_id`, `teacher_name` and `bank_name` on `GET /questions/labels` rows.
+The Question Sets list shows only S.No., the set name and a View action. View opens `/labels/:id`, which shows the set ID, teacher (name and ID), bank and question count in one summary row. The questions, add-question and import tabs that used to be on the list page are now on this page. `/labels/:id?tab=import` opens the import tab. `/questions/import` now shows the list and asks you to choose the set to import into. Teacher and bank details come from `teacher_id`, `teacher_name` and `bank_name` on `GET /questions/labels` rows. Admins can edit a set's name and bank from its page with **Edit** (`PUT /questions/labels/:id` with `{ labelName, bankName }`); the backend must provide this endpoint. The page's **Search records** box searches the whole set on the server (`GET /questions?labelId=…&search=…`), not just the questions on the current page.
 
 ## Question Bank search
 
-The Question Bank uses search and filters instead of a dropdown. Results load one page at a time from the server, and typing waits 350 ms before a request is sent. Parameters for `GET /questions`:
+The Question Bank lists every individual question. Each question belongs to one question set (`label_id`); the set carries the bank and teacher, and championships use sets (`label_ids` / mode `label_ids`). The table shows Question ID (`Q-00042`), question, correct answer, set, teacher, Status (Included / Excluded / Blocked) and Live quiz (the live championships currently drawing from the question's set, worked out from `GET /admin/championships`). View opens a panel with the full question and every championship using its set.
+
+Search is one box that looks in every field (sent as `q` with `field=all`), with a **Filters** button that folds out Teacher, Question set, Status (Included / Excluded / Blocked) and Live quiz (Included = the set is used by a championship live today, Excluded = it is not). Search and filters apply together; active ones show as removable chips, with Clear filters and Clear all. The Question Sets list has the same bar, searching set name and ID, teacher name and ID, and bank, with filters for Teacher, Set status and Championship (sets the championship uses), applied in the browser. Results load one page at a time from the server, and typing waits 350 ms before a request is sent. Parameters for `GET /questions`:
 
 | Parameter | Meaning |
 |---|---|
-| `q`, `field` | Partial, case-insensitive keyword. `field` is `all` (default), `bank`, `teacher`, `teacherId` or `set` |
-| `search` | Words in the question text |
+| `q`, `field` | Case-insensitive keyword. The panel always sends `field=all`, which must also match question text and question IDs (`Q-00042` / `42`). **The backend's `all` must cover these.** `field` is `all` (default), `set` (set name), `setId`, `teacher` (teacher name), `teacherId` or `bank`. Names match every word in any order; IDs (`QS-0012`, `12`, `TCH-0103`, `103`) match exactly or by the start of the code. The Question Sets list applies the same rules in the browser. |
+| `search` | Words in the question text (Search in: Question text) |
 | `teacherId`, `labelId` | Exact teacher or question set |
-| `liveState` | `included`, `excluded` or `blocked` |
-| `questionId` | One question (used by the editor) |
+| `liveState` | Status: `included`, `excluded` or `blocked` |
+| `liveChampionship` | `yes`: the question's set is used by a championship that is live today (active, not blocked, within its dates); `no`: it is not. **New: the backend must support this.** |
+| `questionId` | One question (Search in: Question ID, and the editor). `Q-00042` and `42` are both sent as `42` |
 | `page`, `limit` | Pagination (10, 25, 50 or 100 rows) |
 
 Question rows should include `bank_name`, `teacher_id` and `teacher_name`. The Teacher and Question set pickers call `GET /admin/teachers?search=&limit=10` and `GET /questions/labels?search=&limit=10`. If the server ignores these parameters, the panel filters the response and keeps only the first 10 matches.
