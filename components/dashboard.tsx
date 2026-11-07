@@ -104,7 +104,7 @@ const totals = teacher
     ]
   : [
       ["totalUsers", "registered users"],
-      ["totalTeachers", "teachers"],
+      ["totalTeachers", "championship makers"],
       ["totalChampionships", "championships"],
       ["totalQuestions", "questions"],
       ["totalQuizzesPlayed", "quiz plays"],
@@ -268,8 +268,8 @@ export function Dashboard() {
       {!teacher && !!data?.pendingTeachers && (
         <Notice kind="info">
           {number(data.pendingTeachers)}{" "}
-          {data.pendingTeachers === 1 ? "teacher is" : "teachers are"} waiting
-          for approval. <Link href="/teachers">Review teachers</Link>
+          {data.pendingTeachers === 1 ? "championship maker is" : "championship makers are"} waiting
+          for approval. <Link href="/teachers">Review championship makers</Link>
         </Notice>
       )}
       {stats.error ? (

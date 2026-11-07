@@ -27,7 +27,7 @@ export const teacherNavigation = [
   {
     title: "Support",
     items: [
-      ["/help/teacher", "Teacher’s Help", "help"],
+      ["/help/teacher", "Championship Maker’s Help", "help"],
       ["/contact", "Contact", "mail"],
       ["/privacy/teacher", "Terms and Privacy", "file"],
     ],
@@ -40,7 +40,7 @@ export const adminNavigation = [
   {
     title: "People & Organisations",
     items: [
-      ["/teachers", "Teachers", "users"],
+      ["/teachers", "Championship Makers", "users"],
       ["/institutes", "Institutes", "building"],
       ["/departments", "Departments", "building"],
       ["/qualifications", "Qualifications", "file"],
@@ -66,9 +66,9 @@ export const adminNavigation = [
   {
     title: "Help & Terms",
     items: [
-      ["/help/teacher", "Teacher Help", "help"],
+      ["/help/teacher", "Championship Maker Help", "help"],
       ["/help/user", "User Help", "help"],
-      ["/privacy/teacher", "Teacher Privacy", "file"],
+      ["/privacy/teacher", "Championship Maker Privacy", "file"],
       ["/privacy/user", "User Privacy", "file"],
     ],
   },

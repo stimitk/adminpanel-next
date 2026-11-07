@@ -25,6 +25,20 @@ export function shuffle<T>(r: Random, list: readonly T[]): T[] {
   }
   return copy;
 }
+// A game mode row; Quick Challenge is always followed by Play & Win.
+function modesFor(id: number, name: string, subject: string, questions: number): Row[] {
+  const mode = (mode_id: number, mode_name: string) => ({
+    mode_id,
+    mode_name,
+    description: `${subject} questions drawn from the linked sets.`,
+    no_of_question: questions,
+    time_minutes: `00:${String(Math.ceil((questions * 30) / 60)).padStart(2, "0")}:00`,
+  });
+  return name === "Quick Challenge"
+    ? [mode(id, name), mode(1000 + id, "Play & Win")]
+    : [mode(id, name)];
+}
+
 const DAY = 86_400_000;
 export const isoDay = (offsetDays: number) =>
   new Date(Date.now() + offsetDays * DAY).toISOString().slice(0, 10);
@@ -298,15 +312,12 @@ export function generateDemoData(base: {
       status: i === 7 ? 0 : 1,
       is_blocked: i === 8,
       total_participants: 0,
-      modes: [
-        {
-          mode_id: championships.length + 1,
-          mode_name: pick(r, ["Classic", "Speed Round", "Marathon", "Quick Challenge"]),
-          description: `${subject} questions drawn from the linked sets.`,
-          no_of_question: questionsPerGame,
-          time_minutes: `00:${String(Math.ceil((questionsPerGame * 30) / 60)).padStart(2, "0")}:00`,
-        },
-      ],
+      modes: modesFor(
+        championships.length + 1,
+        pick(r, ["Classic", "Speed Round", "Marathon", "Quick Challenge"]),
+        subject,
+        questionsPerGame,
+      ),
       label_ids: sets.map((s) => s.label_id),
     });
   });

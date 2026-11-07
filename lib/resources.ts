@@ -137,10 +137,10 @@ export const resources: Record<string, Resource> = {
     ],
   },
   teachers: {
-    title: "Teachers",
+    title: "Championship Makers",
     endpoint: "/admin/teachers",
     columns: [
-      ["teacher_code", "Teacher ID"],
+      ["teacher_code", "Championship Maker ID"],
       ["teacher_name", "Name"],
       ["username", "Username"],
       ["email", "Email"],
@@ -251,20 +251,20 @@ export const unavailable: Record<
     ],
   },
   "teachers/new": {
-    title: "New Teacher",
+    title: "New Championship Maker",
     message:
-      "Teacher registration is not available yet. Existing teachers can be reviewed from Teachers.",
+      "Championship Maker registration is not available yet. Existing championship makers can be reviewed from Championship Makers.",
     fields: [
-      required("name", "Teacher name"),
+      required("name", "Championship Maker name"),
       required("username", "Username"),
       required("email", "Email", "email"),
       required("phone", "Phone"),
     ],
   },
   signup: {
-    title: "Teacher Registration",
+    title: "Championship Maker Registration",
     message:
-      "New teacher registration is not available yet. Contact your administrator to request an account.",
+      "New championship maker registration is not available yet. Contact your administrator to request an account.",
     fields: [
       required("name", "Name"),
       required("username", "Username"),
@@ -275,7 +275,7 @@ export const unavailable: Record<
     ],
   },
   "help/teacher": {
-    title: "Teacher’s Help",
+    title: "Championship Maker’s Help",
     message: "Help content is not available yet.",
   },
   "help/user": {
@@ -283,8 +283,8 @@ export const unavailable: Record<
     message: "Help content is not available yet.",
   },
   "privacy/teacher": {
-    title: "Teacher Terms and Privacy",
-    message: "Teacher terms and privacy content are not available yet.",
+    title: "Championship Maker Terms and Privacy",
+    message: "Championship Maker terms and privacy content are not available yet.",
   },
   "privacy/user": {
     title: "User Terms and Privacy",
@@ -333,6 +333,6 @@ export const unavailable: Record<
   "account/delete": {
     title: "Delete Account",
     message:
-      "Teacher account deletion is not available yet. Contact your administrator.",
+      "Championship Maker account deletion is not available yet. Contact your administrator.",
   },
 };

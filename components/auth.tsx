@@ -385,7 +385,7 @@ export function Signup() {
                 className="signup-availability"
                 role="status"
               >
-                Teacher registration is currently unavailable. Contact your
+                Championship Maker registration is currently unavailable. Contact your
                 administrator to request an account.
               </p>
               <button

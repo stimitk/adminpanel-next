@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, errorText, rowsOf } from "../lib/api";
 import { questionFields } from "../lib/resources";
-import { parseCorrectAnswers } from "../lib/answers";
 import {
   championshipLabelIds,
   championshipPhase,
@@ -25,6 +24,7 @@ import { RichText } from "./rich-text-editor";
 import type { Row } from "../lib/types";
 import {
   ACTIONS_COLUMN,
+  SERIAL_COLUMN,
   DataTable,
   Form,
   Heading,
@@ -49,74 +49,34 @@ import {
   type PickerOption,
 } from "./ui";
 
+// Active unless an admin has blocked the question.
 export function liveState(row: Row) {
-  return isBlocked(row)
-    ? "Blocked"
-    : isIncludedInLive(row)
-      ? "Included"
-      : "Excluded";
+  return isBlocked(row) ? "Inactive" : "Active";
 }
 export function LiveStateBadge({ row }: { row: Row }) {
   const state = String(row.live_state || liveState(row));
-  return (
-    <Badge
-      variant={
-        state === "Blocked"
-          ? "suspended"
-          : state === "Included"
-            ? "active"
-            : "inactive"
-      }
-    >
-      {state}
-    </Badge>
-  );
+  return <Badge variant={state === "Active" ? "active" : "inactive"}>{state}</Badge>;
 }
 
 const STATUSES = [
   ["", "Any status"],
-  ["included", "Included"],
-  ["excluded", "Excluded"],
-  ["blocked", "Blocked"],
+  ["active", "Active"],
+  ["blocked", "Inactive"],
 ] as const;
 // Live quiz: whether the question's set is used by a championship that is live today.
 const LIVE_QUIZ = [
   ["", "Any"],
-  ["yes", "Included"],
-  ["no", "Excluded"],
+  ["yes", "In Use"],
+  ["no", "Not in Use"],
 ] as const;
 
-// Correct option numbers with their (plain) text, e.g. "2 · Paris".
-function CorrectAnswer({ row }: { row: Row }) {
-  const answers = parseCorrectAnswers(row.correct_answer);
-  if (!answers.length) return <>{String(row.correct_answer ?? "—")}</>;
-  return (
-    <ul className="answer-list">
-      {answers.map((n) => (
-        <li key={n}>
-          <strong>{n}</strong> {plainRichText(row[`option${n}_text`]) || "—"}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-// Which live championships currently draw this question from its set.
-function LiveQuizCell({ row, live }: { row: Row; live: Row[] }) {
-  if (!live.length) return <span className="muted">Not live</span>;
-  const names = live.map((c) => String(c.champ_name)).join(", ");
-  if (isBlocked(row) || !isIncludedInLive(row))
-    return (
-      <span className="muted" title={`Set is live in: ${names}`}>
-        Not shown ({liveState(row).toLowerCase()})
-      </span>
-    );
-  return (
-    <span title={names}>
-      <Badge variant="info">
-        Live in {live.length} {live.length === 1 ? "championship" : "championships"}
-      </Badge>
-    </span>
+// In Use: the question's set is used by a championship that is live today.
+// The championships themselves are listed in View.
+function LiveQuizCell({ live }: { live: Row[] }) {
+  return live.length ? (
+    <Badge variant="info">In Use</Badge>
+  ) : (
+    <Badge variant="neutral">Not in Use</Badge>
   );
 }
 
@@ -177,7 +137,7 @@ export function QuestionBank() {
   const chips: FilterChip[] = [
     ...(q ? [{ key: "keyword", label: `Search: “${q}”`, clear: () => setKeyword("") }] : []),
     ...(teacher
-      ? [{ key: "teacher", label: `Teacher: ${teacher.label} (${teacher.detail?.split(" · ")[0]})`, clear: () => setTeacher(null) }]
+      ? [{ key: "teacher", label: `Championship Maker: ${teacher.label} (${teacher.detail?.split(" · ")[0]})`, clear: () => setTeacher(null) }]
       : []),
     ...(set ? [{ key: "set", label: `Question set: ${set.label}`, clear: () => setSet(null) }] : []),
     ...(status
@@ -235,27 +195,6 @@ export function QuestionBank() {
       setResult({ kind: "error", text: errorText(e) });
     } finally {
       setBlocking("");
-    }
-  }
-  async function remove(row: Row) {
-    if (
-      !(await confirm({
-        title: "Delete question?",
-        message: "The question is permanently removed from the Question Bank and from its set. This cannot be undone.",
-        confirmLabel: "Delete",
-        isDangerous: true,
-      }))
-    )
-      return;
-    try {
-      await api(`/questions/${encodeURIComponent(String(row.question_id))}`, {
-        method: "DELETE",
-      });
-      setResult({ kind: "success", text: "Question deleted." });
-      if (page > 1 && rows.length === 1) setPage((v) => v - 1);
-      setRevision((v) => v + 1);
-    } catch (e) {
-      setResult({ kind: "error", text: errorText(e) });
     }
   }
   // Selection is scoped to what is on screen; changing the page or filter clears it.
@@ -337,7 +276,7 @@ export function QuestionBank() {
           value={keyword}
           onChange={setKeyword}
           label="Search questions"
-          placeholder="Search by question ID or text, set name or ID, teacher name or ID, or bank"
+          placeholder="Search by question ID or text, set name or ID, championship maker name or ID, or bank"
           chips={chips}
           filterCount={panelFilters}
           onClearFilters={clearFilters}
@@ -345,8 +284,8 @@ export function QuestionBank() {
         >
           {admin && (
             <EntityPicker
-              label="Teacher"
-              placeholder="Name or teacher ID"
+              label="Championship Maker"
+              placeholder="Name or championship maker ID"
               value={teacher}
               onChange={setTeacher}
               load={loadTeachers}
@@ -416,6 +355,7 @@ export function QuestionBank() {
           <Retry error={error} onRetry={() => setRevision((v) => v + 1)} />
         ) : (
           <>
+            <div className="question-bank-table">
             <DataTable
               rows={rows}
               loading={loading}
@@ -439,14 +379,13 @@ export function QuestionBank() {
               rowClassName={(row) => (isBlocked(row) ? "is-blocked" : undefined)}
               render={{
                 question_code: (row) => <code className="entity-code">{String(row.question_code)}</code>,
-                correct_answer: (row) => <CorrectAnswer row={row} />,
                 live_state: (row) => <LiveStateBadge row={row} />,
-                live_quiz: (row) => <LiveQuizCell row={row} live={liveIn(row)} />,
+                live_quiz: (row) => <LiveQuizCell live={liveIn(row)} />,
                 label_name: (row) => (
-                  <Identity name={row.label_name} code={row.label_code as string | null} />
+                  <Identity compact name={row.label_name} code={row.label_code as string | null} />
                 ),
                 teacher_name: (row) => (
-                  <Identity name={row.teacher_name} code={row.teacher_code as string | null} />
+                  <Identity compact name={row.teacher_name} code={row.teacher_code as string | null} />
                 ),
               }}
               selection={{
@@ -458,13 +397,13 @@ export function QuestionBank() {
                 disabled: removing,
               }}
               columns={[
+                [SERIAL_COLUMN, "Sr. No."],
+                ["live_state", "Status"],
                 [ACTIONS_COLUMN, "Actions"],
                 ["question_code", "Question ID"],
                 ["question_text", "Question"],
-                ["correct_answer", "Correct answer"],
                 ["label_name", "Question set"],
-                ["teacher_name", "Teacher"],
-                ["live_state", "Status"],
+                ["teacher_name", "Championship Maker"],
                 ["live_quiz", "Live quiz"],
               ]}
               actions={(row) => {
@@ -477,11 +416,6 @@ export function QuestionBank() {
                       label="View question details"
                       onClick={() => setViewing(row)}
                     />
-                    <IconButton
-                      icon="edit"
-                      label="Edit question"
-                      href={`/questions/${encodeURIComponent(id)}/edit`}
-                    />
                     {admin && (
                       <IconButton
                         icon={blocked ? "unblock" : "block"}
@@ -492,17 +426,11 @@ export function QuestionBank() {
                         onClick={() => toggleBlock(row)}
                       />
                     )}
-                    <IconButton
-                      icon="delete"
-                      label="Delete question"
-                      tone="danger"
-                      disabled={removing}
-                      onClick={() => remove(row)}
-                    />
                   </IconActions>
                 );
               }}
             />
+            </div>
             {data && (
               <Pagination
                 page={page}
@@ -560,7 +488,7 @@ function QuestionDetails({
 }) {
   const id = String(row.question_id);
   const blocked = isBlocked(row);
-  const correct = parseCorrectAnswers(row.correct_answer);
+  // The correct answer is never shown here; the editor is the place for it.
   return (
     <Drawer
       isOpen
@@ -572,21 +500,10 @@ function QuestionDetails({
         </>
       }
     >
-      <div className="question-detail">
-        <RichText value={row.question_text} />
-        <ol className="question-detail-options">
-          {[1, 2, 3, 4].map((n) => (
-            <li key={n} className={correct.includes(String(n)) ? "is-correct" : undefined}>
-              <span>{plainRichText(row[`option${n}_text`]) || "—"}</span>
-              {correct.includes(String(n)) && <Badge variant="active">Correct</Badge>}
-            </li>
-          ))}
-        </ol>
-      </div>
       <dl className="details-grid compact">
         {[
-          ["Question set", <Identity key="set" name={row.label_name} code={row.label_id ? questionSetCode(row) : null} />],
-          ["Teacher", <Identity key="teacher" name={row.teacher_name} code={row.teacher_id ? teacherCode(row) : null} />],
+          ["Question set", <Identity compact key="set" name={row.label_name} code={row.label_id ? questionSetCode(row) : null} />],
+          ["Championship Maker", <Identity compact key="teacher" name={row.teacher_name} code={row.teacher_id ? teacherCode(row) : null} />],
           ["Question bank", String(row.bank_name || "—")],
           ["Coins", String(row.total_coins ?? "—")],
           ["Expected time", row.expected_time_sec ? `${row.expected_time_sec} sec` : "—"],
@@ -623,7 +540,7 @@ function QuestionDetails({
       {!blocked && !isIncludedInLive(row) && championships.length > 0 && (
         <p className="muted">Excluded in its set, so live quizzes skip it.</p>
       )}
-      <div className="form-actions">
+      <div className="form-actions question-detail-actions">
         <Button href={`/questions/${encodeURIComponent(id)}/edit`}>Edit question</Button>
         {row.label_id ? (
           <Button variant="secondary" href={`/labels/${encodeURIComponent(String(row.label_id))}`}>
@@ -635,6 +552,17 @@ function QuestionDetails({
             {blocked ? "Unblock question" : "Block question"}
           </Button>
         )}
+      </div>
+      <h3 className="drawer-section-title">Question</h3>
+      <div className="question-detail">
+        <RichText value={row.question_text} />
+        <ol className="question-detail-options">
+          {[1, 2, 3, 4].map((n) => (
+            <li key={n}>
+              <span>{plainRichText(row[`option${n}_text`]) || "—"}</span>
+            </li>
+          ))}
+        </ol>
       </div>
     </Drawer>
   );

@@ -19,8 +19,8 @@ export const RECORD_SEARCH_FIELDS = [
   ["all", "All fields"],
   ["set", "Set name"],
   ["setId", "Set ID"],
-  ["teacher", "Teacher name"],
-  ["teacherId", "Teacher ID"],
+  ["teacher", "Championship Maker name"],
+  ["teacherId", "Championship Maker ID"],
 ] as const;
 export type RecordSearchField =
   | (typeof RECORD_SEARCH_FIELDS)[number][0]

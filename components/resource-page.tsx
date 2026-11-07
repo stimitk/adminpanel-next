@@ -56,10 +56,10 @@ export function ResourcePage({
 
   async function setTeacherStatus(row: Row, status: 1 | 2) {
     const id = String(row.teacher_id);
-    const name = String(row.teacher_name || "this teacher");
+    const name = String(row.teacher_name || "this championship maker");
     if (
       !(await confirm({
-        title: status === 1 ? "Approve teacher?" : "Suspend teacher?",
+        title: status === 1 ? "Approve championship maker?" : "Suspend championship maker?",
         message:
           status === 1
             ? `${name} will be able to sign in and create question sets and championships.`
@@ -192,7 +192,7 @@ export function ResourcePage({
                       <IconActions>
                         <IconButton
                           icon="approve"
-                          label="Approve teacher"
+                          label="Approve championship maker"
                           tone="success"
                           loading={busy === id}
                           disabled={busy === id || row.status === 1}
@@ -201,7 +201,7 @@ export function ResourcePage({
                         />
                         <IconButton
                           icon="block"
-                          label="Suspend teacher"
+                          label="Suspend championship maker"
                           tone="danger"
                           disabled={busy === id || row.status === 2}
                           disabledReason="Already suspended"

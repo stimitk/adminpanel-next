@@ -69,6 +69,13 @@ const Leaderboard = dynamic(
   }
 );
 
+const WrongQuestions = dynamic(
+  () => import("./wrong-questions").then((m) => ({ default: m.WrongQuestions })),
+  {
+    loading: () => <SkeletonPage withMetrics cards={2} />,
+  }
+);
+
 const QuestionBank = dynamic(
   () => import("./questions").then((m) => ({ default: m.QuestionBank })),
   {
@@ -193,7 +200,7 @@ function Account() {
             ["Name", profile?.name],
             ["Username", profile?.username],
             ["Email", profile?.email],
-            ["Role", profile?.role],
+            ["Role", profile?.role === "teacher" ? "Championship Maker" : profile?.role],
             ["Institute", profile?.institute],
             ["Department", profile?.department],
           ].map(([label, value]) => (
@@ -287,6 +294,7 @@ function Screen({ route }: { route: string }) {
   // /analytics/:id is the older leaderboard URL; it keeps working.
   if (section === "analytics")
     return id ? <Leaderboard key={id} championshipId={id} /> : <AnalyticsDashboard />;
+  if (route === "frequent-errors") return <WrongQuestions />;
   if (section === "leaderboard")
     return <Leaderboard key={id || "first"} championshipId={id} />;
   if (section === "questions") {

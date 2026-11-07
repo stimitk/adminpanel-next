@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
@@ -23,7 +23,6 @@ import {
   Button,
   StatusBadge,
   Badge,
-  Modal,
   ACTIONS_COLUMN,
   IconActions,
   IconButton,
@@ -139,7 +138,6 @@ export function Championships() {
   const [errorMessage, setError] = useState("");
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState("");
-  const [renaming, setRenaming] = useState<Row | null>(null);
   const [statusFilter, setStatusFilter] = useState("");
   const { profile } = useAuth();
   const { confirm, dialog } = useConfirm();
@@ -200,7 +198,7 @@ export function Championships() {
       !(await confirm({
         title: blocked ? "Block championship?" : "Unblock championship?",
         message: blocked
-          ? `Players will not be able to open or join “${name}” until it is unblocked. Teachers cannot activate it while it is blocked.`
+          ? `Players will not be able to open or join “${name}” until it is unblocked. Championship Makers cannot activate it while it is blocked.`
           : `“${name}” can be opened and joined again if it is active.`,
         confirmLabel: blocked ? "Block" : "Unblock",
         isDangerous: blocked,
@@ -307,21 +305,13 @@ export function Championships() {
                     label="View championship details"
                     href={`/championships/${path}`}
                   />
-                  {own ? (
+                  {(own || adminControls) && (
                     <IconButton
                       icon="edit"
                       label="Edit championship"
+                      disabled={busy}
                       href={`/championships/${path}/edit`}
                     />
-                  ) : (
-                    adminControls && (
-                      <IconButton
-                        icon="edit"
-                        label="Edit championship name"
-                        disabled={busy}
-                        onClick={() => setRenaming(row)}
-                      />
-                    )
                   )}
                   {(own || adminControls) && (
                     <IconButton
@@ -350,103 +340,20 @@ export function Championships() {
         )}
       </Card>
       {dialog}
-      {renaming && (
-        <RenameChampionship
-          row={renaming}
-          onClose={() => setRenaming(null)}
-          onSaved={(name) => {
-            setRenaming(null);
-            setError("");
-            setMessage(`Championship name updated to “${name}”.`);
-            setRevision((v) => v + 1);
-          }}
-        />
-      )}
     </>
   );
 }
 
-function RenameChampionship({
-  row,
-  onClose,
-  onSaved,
-}: {
-  row: Row;
-  onClose: () => void;
-  onSaved: (name: string) => void;
-}) {
-  const [name, setName] = useState(String(row.champ_name || ""));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const value = name.trim().replace(/\s+/g, " ");
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (busy) return;
-    if (value.length < 2 || value.length > 100) {
-      setError("Use between 2 and 100 characters.");
-      return;
-    }
-    if (value === String(row.champ_name)) {
-      onClose();
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await api(
-        `/admin/championships/${encodeURIComponent(String(row.champ_id))}`,
-        { method: "PUT", body: { champName: value } },
-      );
-      onSaved(value);
-    } catch (e) {
-      setError(errorText(e));
-      setBusy(false);
-    }
-  }
-  return (
-    <Modal
-      isOpen
-      onClose={() => !busy && onClose()}
-      title="Edit championship"
-      description="The new name appears everywhere this championship is shown."
-    >
-      <form onSubmit={submit}>
-        {error && <Notice kind="error">{error}</Notice>}
-        <div className="field">
-          <label htmlFor="rename-championship">Championship name</label>
-          <input
-            id="rename-championship"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            minLength={2}
-            maxLength={100}
-            required
-            autoFocus
-            disabled={busy}
-          />
-        </div>
-        <div className="form-actions">
-          <Button type="submit" loading={busy} disabled={busy}>
-            {busy ? "Saving…" : "Save name"}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={busy}
-            onClick={onClose}
-          >
-            Cancel
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 function dateValue(value: unknown) {
   return typeof value === "string" ? value.slice(0, 10) : "";
 }
 export function ChampionshipEditor({ id }: { id?: string }) {
-  return id ? <ExistingChampionshipEditor id={id} /> : <ChampionshipWizard />;
+  if (!id) return <ChampionshipWizard />;
+  return portal.kind === "admin" ? (
+    <AdminChampionshipEditor id={id} />
+  ) : (
+    <ExistingChampionshipEditor id={id} />
+  );
 }
 function ExistingChampionshipEditor({ id }: { id: string }) {
   const router = useRouter();
@@ -544,7 +451,6 @@ function ExistingChampionshipEditor({ id }: { id: string }) {
 }
 export function ChampionshipDetails({ id }: { id: string }) {
   const [revision, setRevision] = useState(0);
-  const [saved, setSaved] = useState(false);
   const { data, loading, error } = useLoad<Row>(
     `/championships/${encodeURIComponent(id)}`,
     revision,
@@ -568,7 +474,6 @@ export function ChampionshipDetails({ id }: { id: string }) {
           </div>
         }
       />
-      {saved && <Notice kind="success">Championship updated.</Notice>}
       {loading ? (
         <Loading />
       ) : error ? (
@@ -581,7 +486,7 @@ export function ChampionshipDetails({ id }: { id: string }) {
                 {[
                   ["Championship ID", championshipCode(data)],
                   ["Category", data.category_name],
-                  ["Teacher", data.teacher_name],
+                  ["Championship Maker", data.teacher_name],
                   [
                     "Starts",
                     `${dateValue(data.start_date)} ${data.start_time || ""}`,
@@ -613,6 +518,7 @@ export function ChampionshipDetails({ id }: { id: string }) {
             <Card style={{ marginTop: 20 }}>
               <h2 style={{ margin: "0 0 16px" }}>Game Settings</h2>
               <DataTable
+                searchable={false}
                 rows={rowsOf(data.modes)}
                 columns={[
                   ["mode_name", "Game mode"],
@@ -622,16 +528,6 @@ export function ChampionshipDetails({ id }: { id: string }) {
                 ]}
               />
             </Card>
-            {portal.kind === "admin" && (
-              <AdminChampionshipForm
-                key={revision}
-                row={data}
-                onSaved={() => {
-                  setSaved(true);
-                  setRevision((v) => v + 1);
-                }}
-              />
-            )}
           </>
         )
       )}
@@ -646,7 +542,35 @@ const minutesOf = (value: unknown) => {
 const clock = (minutes: number) =>
   `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:00`;
 
-// Admins can edit every championship field from the details page.
+// Admins edit every championship field from the Edit action in the list.
+function AdminChampionshipEditor({ id }: { id: string }) {
+  const router = useRouter();
+  const [revision, setRevision] = useState(0);
+  const { data, loading, error } = useLoad<Row>(
+    `/championships/${encodeURIComponent(id)}`,
+    revision,
+  );
+  return (
+    <>
+      <Heading
+        title="Edit Championship"
+        breadcrumb={<Link href="/championships">← All championships</Link>}
+      />
+      {loading ? (
+        <Loading />
+      ) : error ? (
+        <Retry error={error} onRetry={() => setRevision((v) => v + 1)} />
+      ) : (
+        data && (
+          <AdminChampionshipForm
+            row={data}
+            onSaved={() => router.push("/championships")}
+          />
+        )
+      )}
+    </>
+  );
+}
 function AdminChampionshipForm({ row, onSaved }: { row: Row; onSaved: () => void }) {
   const modes = rowsOf(row.modes);
   const base = championshipFields.filter((f) =>
@@ -677,8 +601,7 @@ function AdminChampionshipForm({ row, onSaved }: { row: Row; onSaved: () => void
     initial[`mode${i}Description`] = mode.description;
   });
   return (
-    <Card style={{ marginTop: 20 }}>
-      <h2 style={{ margin: "0 0 16px" }}>Edit Championship</h2>
+    <Card>
       <Form
         fields={[...base, ...modeFields]}
         initial={initial}

@@ -151,7 +151,7 @@ export function AnalyticsDashboard() {
           </label>
           <EntityPicker label="Question set" placeholder="Set name or ID" value={filters.set} onChange={(set) => update({ set })} load={loadQuestionSets} />
           {!teacherPortal && (
-            <EntityPicker label="Teacher" placeholder="Name or teacher ID" value={filters.teacher} onChange={(teacher) => update({ teacher })} load={loadTeachers} />
+            <EntityPicker label="Championship Maker" placeholder="Name or championship maker ID" value={filters.teacher} onChange={(teacher) => update({ teacher })} load={loadTeachers} />
           )}
           <label>
             From
@@ -256,7 +256,7 @@ export function AnalyticsDashboard() {
               serial
               sortable
               defaultSort={{ key: "participants", dir: "desc" }}
-              searchPlaceholder="Championship, set or teacher name or ID"
+              searchPlaceholder="Championship, set or championship maker name or ID"
               searchMatch={(row, q) =>
                 matchesSearch(
                   [row.champ_name, row.champ_code, row.category_name, row.label_name, row.label_code, row.teacher_name, row.teacher_code].join(" "),
@@ -271,7 +271,7 @@ export function AnalyticsDashboard() {
                 [ACTIONS_COLUMN, "Actions"],
                 ["champ_name", "Championship"],
                 ["label_name", "Question set"],
-                ["teacher_name", "Teacher"],
+                ["teacher_name", "Championship Maker"],
                 ["participants", "Participants"],
                 ["attempted", "Attempted"],
                 ["correct", "Correct"],

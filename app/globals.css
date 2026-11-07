@@ -2283,6 +2283,12 @@ td.serial-cell {
   gap: 2px;
   align-items: flex-start;
 }
+.identity.compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+}
 .option-list {
   margin: 0;
   padding-left: 18px;
@@ -2430,6 +2436,27 @@ td.serial-cell {
 }
 
 /* Question Bank cells and details. */
+.question-bank-table th,
+.question-bank-table td {
+  padding: 12px 10px;
+}
+.question-bank-table td[data-col="question_code"],
+.question-bank-table td[data-col="live_state"],
+.question-bank-table td[data-col="live_quiz"] {
+  min-width: 0;
+  white-space: nowrap;
+}
+.question-bank-table td[data-col="question_text"] {
+  min-width: 240px;
+}
+.question-bank-table td[data-col="label_name"],
+.question-bank-table td[data-col="teacher_name"] {
+  min-width: 150px;
+  max-width: 220px;
+}
+.question-detail-actions {
+  margin: 4px 0 0;
+}
 .answer-list {
   list-style: none;
   margin: 0;
@@ -3012,4 +3039,80 @@ td .text-button.table-link {
   .pagination .page-size {
     width: 100%;
   }
+}
+
+/* Wrong Questions: championship filter beside the section title, review and reward panel. */
+.section-heading .inline-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-weight: 500;
+}
+.section-heading .inline-filter select {
+  min-width: 240px;
+  max-width: 100%;
+}
+.wrong-question-text {
+  margin: 8px 0 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #faf7f2;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.review-panel {
+  margin: 8px 0 4px;
+  padding: 4px 18px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.review-panel p {
+  margin: 0 0 12px;
+}
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.reward-form {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+}
+.reward-form > label {
+  width: min(240px, 100%);
+  margin: 0;
+}
+.reward-form input[type="number"] {
+  margin-top: 5px;
+}
+.reward-form legend {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.reward-form .check-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-weight: 400;
+}
+.reward-form .check-option input {
+  width: auto;
+  margin: 0;
+}
+@media (max-width: 720px) {
+  .section-heading .inline-filter {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+  .section-heading .inline-filter select {
+    min-width: 0;
+  }
+}
+.analytics-filters .section-heading {
+  flex-wrap: wrap;
 }

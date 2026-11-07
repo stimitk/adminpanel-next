@@ -20,6 +20,7 @@ import { KpiCards, type Stat } from "./charts";
 import { useChampionshipList } from "./championships";
 import {
   ACTIONS_COLUMN,
+  SERIAL_COLUMN,
   Badge,
   Button,
   Card,
@@ -210,9 +211,9 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
           </label>
           {!teacherPortal && (
             <label>
-              Teacher
+              Championship Maker
               <select value={filters.teacherId} onChange={(e) => update({ teacherId: e.target.value })}>
-                <option value="">All teachers</option>
+                <option value="">All championship makers</option>
                 {teachers.map(([id, name]) => (
                   <option key={id} value={id}>
                     {name}
@@ -288,6 +289,7 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
               emptyMessage={activeFilters ? "No participants match these filters" : "No results yet"}
               emptyDescription={activeFilters ? "Reset or widen the filters." : "Results appear here once participants complete this championship."}
               columns={[
+                [SERIAL_COLUMN, "Sr. No."],
                 ["rank", "Rank"],
                 [ACTIONS_COLUMN, "Actions"],
                 ["user_name", "Participant"],
@@ -296,8 +298,7 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
                 ["correct", "Correct"],
                 ["time_taken_sec", "Time taken"],
                 ["result", "Result"],
-                ["label_name", "Question set"],
-                ...(teacherPortal ? [] : [["teacher_name", "Teacher"] as [string, string]]),
+                ["champ_name", "Championship Name"],
                 ["completed_at", "Completed"],
               ]}
               render={{
@@ -317,10 +318,7 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
                     <small> / {String(row.total_questions)}</small>
                   </span>
                 ),
-                teacher_name: (row) => (
-                  <Identity name={row.teacher_name} code={row.teacher_id ? teacherCode(row) : null} />
-                ),
-                label_name: (row) => String(row.label_name || "—"),
+                champ_name: (row) => String(row.champ_name || championship?.champ_name || "—"),
                 accuracy: (row) => percent(Number(row.accuracy)),
                 time_taken_sec: (row) => formatDuration(row.time_taken_sec),
                 completed_at: (row) => <Completed value={String(row.completed_at || "")} />,
@@ -384,7 +382,7 @@ function ParticipantDetails({
           ["Email", attempt.user_email || "—"],
           ["Championship", championshipName],
           ["Question set", attempt.label_name || "—"],
-          ["Teacher", attempt.teacher_name ? `${attempt.teacher_name} (${teacherCode(attempt)})` : "—"],
+          ["Championship Maker", attempt.teacher_name ? `${attempt.teacher_name} (${teacherCode(attempt)})` : "—"],
           ["Participated on", formatDateTime(attempt.completed_at)],
           ["Total time taken", formatDuration(attempt.time_taken_sec)],
         ].map(([label, value]) => (

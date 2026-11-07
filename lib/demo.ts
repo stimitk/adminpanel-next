@@ -77,6 +77,13 @@ let championships: Row[] = [
         no_of_question: 10,
         time_minutes: "00:10:00",
       },
+      {
+        mode_id: 1001,
+        mode_name: "Play & Win",
+        description: "Play and win rewards on science questions.",
+        no_of_question: 10,
+        time_minutes: "00:10:00",
+      },
     ],
     label_ids: [1],
   },
@@ -177,6 +184,79 @@ questions = generated.questions;
 championships = generated.championships;
 masters.teachers = generated.teachers;
 const attempts = generated.attempts;
+
+// Wrong-question reports: a few students per question flag it as incorrect
+// after playing. Status: pending → verified | rejected → rewarded.
+const reportReasons = [
+  "The marked answer is wrong.",
+  "Two options are correct.",
+  "None of the options is correct.",
+  "The question text has a mistake.",
+  "",
+];
+const wrongReports: Row[] = (() => {
+  const r = seeded(4242);
+  const rows: Row[] = [];
+  const played = championships.filter((c) => attempts.some((a) => a.champ_id === c.champ_id));
+  for (const c of played.slice(0, 6)) {
+    const players = attempts.filter((a) => a.champ_id === c.champ_id);
+    const sets = championshipLabelIds(c);
+    const pool = questions.filter((q) => sets.includes(String(q.label_id)));
+    for (const q of shuffle(r, pool).slice(0, 2 + Math.floor(r() * 4)))
+      for (const a of shuffle(r, players).slice(0, 1 + Math.floor(r() * 9)))
+        rows.push({
+          report_id: rows.length + 1,
+          question_id: q.question_id,
+          champ_id: c.champ_id,
+          user_id: a.user_id,
+          user_name: a.user_name,
+          user_email: a.user_email,
+          reported_at: new Date(Date.parse(String(a.completed_at)) + r() * 3_600_000).toISOString(),
+          reason: reportReasons[Math.floor(r() * reportReasons.length)],
+          status: "pending",
+        });
+  }
+  return rows;
+})();
+// Student coin balances and the coin ledger that bonus rewards are written to.
+const coinBalances = new Map<string, number>();
+for (const a of attempts)
+  coinBalances.set(String(a.user_id), (coinBalances.get(String(a.user_id)) || 0) + Number(a.marks || 0));
+const coinTransactions: Row[] = [];
+// One bonus per student per question, like a unique (user_id, question_id) key.
+const rewardedKeys = new Set<string>();
+// Replayed reward requests return the first result instead of paying again.
+const rewardRequests = new Map<string, unknown>();
+function reportRow(report: Row): Row {
+  const q = questions.find((x) => String(x.question_id) === String(report.question_id));
+  const c = championships.find((x) => String(x.champ_id) === String(report.champ_id));
+  return {
+    ...report,
+    question_text: q?.question_text ?? null,
+    champ_name: c?.champ_name ?? null,
+    coin_balance: coinBalances.get(String(report.user_id)) ?? 0,
+  };
+}
+// Incorrect-answer counts per question, optionally for one championship.
+function frequentErrors(championshipId: string | null) {
+  const reported = [
+    ...new Set(
+      wrongReports
+        .filter((x) => !championshipId || String(x.champ_id) === championshipId)
+        .map((x) => String(x.question_id)),
+    ),
+  ];
+  // A few frequently missed questions nobody has reported.
+  const unreported = championshipId ? [] : questions.slice(0, 4).map((q) => String(q.question_id));
+  return [...new Set([...reported, ...unreported])].flatMap((id) => {
+    const q = questions.find((x) => String(x.question_id) === id);
+    if (!q) return [];
+    const reports = wrongReports.filter(
+      (x) => String(x.question_id) === id && (!championshipId || String(x.champ_id) === championshipId),
+    ).length;
+    return [{ question_id: q.question_id, question_text: q.question_text, error_count: reports * 3 + (Number(id) % 17) + 2 }];
+  });
+}
 function labelOf(id: unknown) {
   return labels.find((l) => String(l.label_id) === String(id));
 }
@@ -456,14 +536,24 @@ export function demoRequest(
       if (String(q.label_id) === String(row.label_id)) q.label_name = name;
     data = { updated: true };
   } else if (route === "/questions/analytics/frequent-errors")
-    data = [
-      {
-        question_id: 1,
-        question_text: questions[0]?.question_text,
-        error_count: 2,
-      },
-    ];
-  else if (route === "/questions" && method === "GET") {
+    data = frequentErrors(url.searchParams.get("championshipId"));
+  else if (route === "/questions/wrong-reports" && method === "GET") {
+    const champ = url.searchParams.get("championshipId");
+    const question = url.searchParams.get("questionId");
+    const own = new Set(
+      championships
+        .filter((c) => String(c.teacher_id) === String(session.profile.id))
+        .map((c) => String(c.champ_id)),
+    );
+    data = wrongReports
+      .filter(
+        (x) =>
+          (session.profile.role === "superadmin" || own.has(String(x.champ_id))) &&
+          (!champ || String(x.champ_id) === champ) &&
+          (!question || String(x.question_id) === question),
+      )
+      .map(reportRow);
+  } else if (route === "/questions" && method === "GET") {
     const params = url.searchParams;
     const search = params.get("search") || "",
       label = params.get("labelId"),
@@ -492,7 +582,9 @@ export function demoRequest(
         (!liveState ||
           (liveState === "blocked"
             ? isBlocked(q)
-            : liveState === "included"
+            : liveState === "active"
+              ? !isBlocked(q)
+              : liveState === "included"
               ? isLiveEligible(q)
               : !isBlocked(q) && !isIncludedInLive(q))) &&
         matchesSearch(q.question_text, search) &&
@@ -754,6 +846,81 @@ export function demoRequest(
       );
       if (row) row.status = input.status;
       data = { updated: true };
+    } else if (key === "wrong-reports/verify" && method === "POST") {
+      // The admin's verdict on a reported question, applied to its open reports.
+      const verdict = input.verdict;
+      if (verdict !== "incorrect" && verdict !== "correct")
+        throw new Error("verdict must be incorrect or correct.");
+      const list = wrongReports.filter((x) => String(x.question_id) === String(input.questionId));
+      if (!list.length) throw new Error("No reports exist for this question.");
+      if (verdict === "correct" && list.some((x) => x.status === "rewarded"))
+        throw new Error("Bonus coins were already awarded for this question, so it cannot be marked correct.");
+      const now = new Date().toISOString();
+      for (const x of list)
+        if (x.status !== "rewarded") {
+          x.status = verdict === "incorrect" ? "verified" : "rejected";
+          x.reviewed_at = now;
+          x.reviewed_by = session.profile.name;
+        }
+      data = { updated: list.length };
+    } else if (key === "wrong-reports/rewards" && method === "POST") {
+      const requestId = String(input.requestId || "");
+      if (!requestId) throw new Error("requestId is required.");
+      if (rewardRequests.has(requestId)) data = rewardRequests.get(requestId);
+      else {
+        const coins = Number(input.coins);
+        if (!Number.isInteger(coins) || coins < 1 || coins > 1000)
+          throw new Error("Bonus coins must be a whole number from 1 to 1000.");
+        const ids = ((input.reportIds || []) as unknown[]).map(String);
+        if (!ids.length) throw new Error("Choose at least one student to reward.");
+        const list = ids.map((id) => {
+          const report = wrongReports.find((x) => String(x.report_id) === id);
+          if (!report || String(report.question_id) !== String(input.questionId))
+            throw new Error(`Report ${id} does not belong to this question.`);
+          return report;
+        });
+        // Validate everything before writing, so a request pays all or nothing.
+        const unverified = list.filter((x) => x.status !== "verified" && x.status !== "rewarded");
+        if (unverified.length)
+          throw new Error("Verify the question as incorrect before awarding bonus coins.");
+        const awarded: Row[] = [], skipped: Row[] = [];
+        const now = new Date().toISOString();
+        for (const report of list) {
+          const unique = `${report.user_id}:${report.question_id}`;
+          if (rewardedKeys.has(unique)) {
+            skipped.push({ report_id: report.report_id, user_id: report.user_id, reason: "already_rewarded" });
+            continue;
+          }
+          rewardedKeys.add(unique);
+          const balance = (coinBalances.get(String(report.user_id)) || 0) + coins;
+          coinBalances.set(String(report.user_id), balance);
+          const transaction = {
+            transaction_id: coinTransactions.length + 1,
+            type: "wrong_question_bonus",
+            user_id: report.user_id,
+            question_id: report.question_id,
+            champ_id: report.champ_id,
+            report_id: report.report_id,
+            coins,
+            balance_after: balance,
+            awarded_by: session.profile.id,
+            created_at: now,
+          };
+          coinTransactions.push(transaction);
+          Object.assign(report, {
+            status: "rewarded",
+            reward_coins: coins,
+            rewarded_at: now,
+            reward_transaction_id: transaction.transaction_id,
+          });
+          awarded.push({ report_id: report.report_id, user_id: report.user_id, coins, balance_after: balance, transaction_id: transaction.transaction_id });
+        }
+        data = { awarded, skipped, totalCoins: awarded.length * coins };
+        rewardRequests.set(requestId, data);
+      }
+    } else if (key === "coin-transactions" && method === "GET") {
+      const question = url.searchParams.get("questionId");
+      data = coinTransactions.filter((t) => !question || String(t.question_id) === question);
     } else if (/^configs\/coins\/[^/]+$/.test(key)) {
       const row = masters["configs/coins"].find(
         (c) => String(c.coin_id) === key.split("/").pop(),

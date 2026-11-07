@@ -286,6 +286,7 @@ export function DataTable({
                   key={key}
                   scope="col"
                   className={cellClass(key)}
+                  data-col={key}
                   aria-sort={
                     sort?.key === key
                       ? sort.dir === "asc"
@@ -367,7 +368,7 @@ export function DataTable({
                     </td>
                   )}
                   {columns.map(([key]) => (
-                    <td key={key} className={cellClass(key)}>
+                    <td key={key} className={cellClass(key)} data-col={key}>
                       {cell(row, key, i)}
                     </td>
                   ))}

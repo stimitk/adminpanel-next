@@ -19,7 +19,7 @@ export async function loadTeachers(query: string, signal: AbortSignal): Promise<
     matchesSearch(t.teacher_name, query) || (id !== null && String(t.teacher_id).includes(id)),
   ).map((t) => ({
     value: String(t.teacher_id),
-    label: String(t.teacher_name || "Unnamed teacher"),
+    label: String(t.teacher_name || "Unnamed championship maker"),
     detail: [teacherCode(t), t.institute].filter(Boolean).join(" · "),
   }));
 }

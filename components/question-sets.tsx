@@ -98,7 +98,7 @@ export function QuestionSets({
   const chips: FilterChip[] = [
     ...(keyword.trim() ? [{ key: "keyword", label: `Search: “${keyword.trim()}”`, clear: () => setKeyword("") }] : []),
     ...(teacher
-      ? [{ key: "teacher", label: `Teacher: ${teacher.label} (${teacher.detail?.split(" · ")[0]})`, clear: () => setTeacher(null) }]
+      ? [{ key: "teacher", label: `Championship Maker: ${teacher.label} (${teacher.detail?.split(" · ")[0]})`, clear: () => setTeacher(null) }]
       : []),
     ...(status
       ? [{ key: "status", label: `Status: ${SET_STATUSES.find(([v]) => v === status)?.[1]}`, clear: () => setStatus("") }]
@@ -140,7 +140,7 @@ export function QuestionSets({
           value={keyword}
           onChange={setKeyword}
           label="Search question sets"
-          placeholder="Search by set name or ID, teacher name or ID, or bank"
+          placeholder="Search by set name or ID, championship maker name or ID, or bank"
           chips={chips}
           filterCount={filterCount}
           onClearFilters={clearFilters}
@@ -151,8 +151,8 @@ export function QuestionSets({
         >
           {portal.kind === "admin" && (
             <EntityPicker
-              label="Teacher"
-              placeholder="Name or teacher ID"
+              label="Championship Maker"
+              placeholder="Name or championship maker ID"
               value={teacher}
               onChange={setTeacher}
               load={loadTeachers}
@@ -205,8 +205,8 @@ export function QuestionSets({
               [ACTIONS_COLUMN, "Actions"],
               ["label_name", "Question set name"],
               ["label_code", "Set ID"],
-              ["teacher_name", "Teacher name"],
-              ["teacher_code", "Teacher ID"],
+              ["teacher_name", "Championship Maker name"],
+              ["teacher_code", "Championship Maker ID"],
               ["status", "Status"],
             ]}
             render={{
@@ -335,7 +335,7 @@ export function QuestionSetDetails({ id }: { id: string }) {
             </dd>
           </div>
           <div>
-            <dt>Teacher</dt>
+            <dt>Championship Maker</dt>
             <dd>
               {String(teacher.teacher_name || "—")}
               {teacher.teacher_id ? <small>{teacherCode(teacher)}</small> : null}
