@@ -298,7 +298,6 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
                 ["correct", "Correct"],
                 ["time_taken_sec", "Time taken"],
                 ["result", "Result"],
-                ["champ_name", "Championship Name"],
                 ["completed_at", "Completed"],
               ]}
               render={{
@@ -318,7 +317,6 @@ export function Leaderboard({ championshipId }: { championshipId?: string }) {
                     <small> / {String(row.total_questions)}</small>
                   </span>
                 ),
-                champ_name: (row) => String(row.champ_name || championship?.champ_name || "—"),
                 accuracy: (row) => percent(Number(row.accuracy)),
                 time_taken_sec: (row) => formatDuration(row.time_taken_sec),
                 completed_at: (row) => <Completed value={String(row.completed_at || "")} />,

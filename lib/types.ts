@@ -36,7 +36,8 @@ export type Field = {
     | "time"
     | "password"
     | "select"
-    | "multiselect";
+    | "multiselect"
+    | "image";
   required?: boolean;
   min?: number;
   max?: number;
@@ -46,6 +47,8 @@ export type Field = {
   options?: Option[];
   source?: string;
   hint?: string;
+  /** Show the field only while another field in the form has this value. */
+  showWhen?: { field: string; value: string };
 };
 export type Resource = {
   title: string;

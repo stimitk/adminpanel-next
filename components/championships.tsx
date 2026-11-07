@@ -7,10 +7,18 @@ import { api, ApiError, errorText, rowsOf } from "../lib/api";
 import { championshipQuestionCounts } from "../lib/championships";
 import { championshipCode } from "../lib/codes";
 import { isBlocked } from "../lib/questions";
-import { championshipFields } from "../lib/resources";
+import {
+  championshipFields,
+  PLAY_AND_WIN,
+  playAndWinFields,
+  playAndWinInitial,
+  playAndWinPayload,
+} from "../lib/resources";
+import { plainRichText } from "../lib/rich-text";
 import { portal } from "../lib/portal";
-import type { Row } from "../lib/types";
+import type { Field, Row } from "../lib/types";
 import { useAuth } from "./auth";
+import { RichText } from "./rich-text-editor";
 import {
   DataTable,
   Form,
@@ -526,6 +534,10 @@ export function ChampionshipDetails({ id }: { id: string }) {
                   ["no_of_question", "Questions"],
                   ["time_minutes", "Duration"],
                 ]}
+                render={{
+                  description: (mode) =>
+                    plainRichText(mode.description) ? <RichText value={mode.description} /> : "—",
+                }}
               />
             </Card>
           </>
@@ -554,7 +566,7 @@ function AdminChampionshipEditor({ id }: { id: string }) {
     <>
       <Heading
         title="Edit Championship"
-        breadcrumb={<Link href="/championships">← All championships</Link>}
+        description="Update its details and game settings, then save when you’re ready."
       />
       {loading ? (
         <Loading />
@@ -574,15 +586,34 @@ function AdminChampionshipEditor({ id }: { id: string }) {
 function AdminChampionshipForm({ row, onSaved }: { row: Row; onSaved: () => void }) {
   const modes = rowsOf(row.modes);
   const base = championshipFields.filter((f) =>
-    ["champName", "categoryId", "startDate", "startTime", "endDate", "endTime", "labelIds"].includes(f.name),
+    ["champName", "categoryId", "startDate", "startTime", "endDate", "endTime"].includes(f.name),
   );
-  const modeFields = modes.flatMap((_, i) => {
+  const modeOptions = championshipFields.find((f) => f.name === "modeName")?.options ?? [];
+  // A saved mode name in another letter case still selects the standard option.
+  const modeValue = (name: unknown) =>
+    modeOptions.find((o) => o.value.toLowerCase() === String(name ?? "").toLowerCase())?.value ?? name;
+  const modeFields: Field[] = modes.flatMap((mode, i) => {
     const suffix = modes.length > 1 ? ` (${i + 1})` : "";
+    const current = String(mode.mode_name ?? "");
     return [
-      { name: `mode${i}Name`, label: `Game mode${suffix}`, required: true, maxLength: 100 },
+      {
+        name: `mode${i}Name`,
+        label: `Game mode${suffix}`,
+        type: "select" as const,
+        required: true,
+        // Keep a legacy mode name selectable so saving never silently changes it.
+        options:
+          current && !modeOptions.some((o) => o.value.toLowerCase() === current.toLowerCase())
+            ? [...modeOptions, { value: current, label: current }]
+            : modeOptions,
+      },
+      { name: `mode${i}Description`, label: `Game description${suffix}`, type: "richtext" as const },
+      // Play and win details are championship-level; they follow the first game mode.
+      ...(i === 0
+        ? playAndWinFields.map((f) => ({ ...f, showWhen: { field: "mode0Name", value: PLAY_AND_WIN } }))
+        : []),
       { name: `mode${i}Questions`, label: `Number of questions${suffix}`, type: "number" as const, required: true, min: 1, max: 100 },
       { name: `mode${i}Duration`, label: `Duration (minutes)${suffix}`, type: "number" as const, required: true, min: 1, max: 1439 },
-      { name: `mode${i}Description`, label: `Game description${suffix}`, type: "textarea" as const },
     ];
   });
   const initial: Record<string, unknown> = {
@@ -592,16 +623,22 @@ function AdminChampionshipForm({ row, onSaved }: { row: Row; onSaved: () => void
     endDate: dateValue(row.end_date),
     startTime: row.start_time,
     endTime: row.end_time,
-    labelIds: Array.isArray(row.label_ids) ? row.label_ids : [],
+    ...playAndWinInitial(row),
   };
   modes.forEach((mode, i) => {
-    initial[`mode${i}Name`] = mode.mode_name;
+    initial[`mode${i}Name`] = modeValue(mode.mode_name);
     initial[`mode${i}Questions`] = mode.no_of_question;
     initial[`mode${i}Duration`] = minutesOf(mode.time_minutes);
     initial[`mode${i}Description`] = mode.description;
   });
   return (
-    <Card>
+    // Same panel and field layout as the create page's setup step.
+    <section className="paper wizard-panel">
+      <h2>Edit championship</h2>
+      <p className="muted">
+        Update the championship details and game settings. Nothing changes until
+        you save.
+      </p>
       <Form
         fields={[...base, ...modeFields]}
         initial={initial}
@@ -624,7 +661,9 @@ function AdminChampionshipForm({ row, onSaved }: { row: Row; onSaved: () => void
               endDate: values.endDate,
               startTime: values.startTime,
               endTime: values.endTime,
-              labelIds: values.labelIds || [],
+              // Question sets aren't edited here; resend the current ones unchanged.
+              ...(Array.isArray(row.label_ids) ? { labelIds: row.label_ids } : {}),
+              ...playAndWinPayload({ ...values, modeName: values.mode0Name }),
               modes: modes.map((mode, i) => ({
                 modeId: mode.mode_id,
                 modeName: values[`mode${i}Name`],
@@ -637,6 +676,6 @@ function AdminChampionshipForm({ row, onSaved }: { row: Row; onSaved: () => void
           onSaved();
         }}
       />
-    </Card>
+    </section>
   );
 }

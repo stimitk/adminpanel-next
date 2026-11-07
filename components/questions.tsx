@@ -9,7 +9,8 @@ import {
   championshipPhase,
   type ChampionshipPhase,
 } from "../lib/championships";
-import { isBlocked, isIncludedInLive, questionBody } from "../lib/questions";
+import { isBlocked, isIncludedInLive, questionBody, questionTimestamps } from "../lib/questions";
+import { formatDateTime } from "../lib/performance";
 import { portal } from "../lib/portal";
 import { plainRichText } from "../lib/rich-text";
 import {
@@ -486,9 +487,9 @@ function QuestionDetails({
   onBlock: () => void;
   onClose: () => void;
 }) {
-  const id = String(row.question_id);
   const blocked = isBlocked(row);
-  // The correct answer is never shown here; the editor is the place for it.
+  const { created, updated } = questionTimestamps(row);
+  // Read-only view: the correct answer is never shown and questions aren't edited here.
   return (
     <Drawer
       isOpen
@@ -507,6 +508,8 @@ function QuestionDetails({
           ["Question bank", String(row.bank_name || "—")],
           ["Coins", String(row.total_coins ?? "—")],
           ["Expected time", row.expected_time_sec ? `${row.expected_time_sec} sec` : "—"],
+          ["Created at", formatDateTime(created)],
+          ["Updated at", updated ? formatDateTime(updated) : created ? "Never updated" : "—"],
         ].map(([name, value]) => (
           <div key={String(name)}>
             <dt>{name}</dt>
@@ -541,7 +544,6 @@ function QuestionDetails({
         <p className="muted">Excluded in its set, so live quizzes skip it.</p>
       )}
       <div className="form-actions question-detail-actions">
-        <Button href={`/questions/${encodeURIComponent(id)}/edit`}>Edit question</Button>
         {row.label_id ? (
           <Button variant="secondary" href={`/labels/${encodeURIComponent(String(row.label_id))}`}>
             Open question set

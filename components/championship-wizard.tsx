@@ -4,15 +4,19 @@ import Link from "next/link";
 import { api, ApiError, asId, errorText, rowsOf } from "../lib/api";
 import {
   championshipFields,
+  isPlayAndWin,
+  playAndWinPayload,
   questionFields,
   resources,
 } from "../lib/resources";
+import { plainRichText } from "../lib/rich-text";
 import { matchesSearch } from "../lib/search";
 import type { Row } from "../lib/types";
 import { Form, Heading, Loading, Notice, Retry, useLoad } from "./ui";
 
 import { BulkImport } from "./bulk-import";
 import { QuestionSetWizard } from "./question-set-wizard";
+import { RichText } from "./rich-text-editor";
 
 const steps = ["Set up championship", "Add questions", "Review & publish"];
 export function ChampionshipWizard() {
@@ -115,6 +119,7 @@ export function ChampionshipWizard() {
             endDate: setup.endDate,
             startTime: setup.startTime,
             endTime: setup.endTime,
+            ...playAndWinPayload(setup),
             modes: [
               {
                 modeName: setup.modeName,
@@ -520,15 +525,36 @@ export function ChampionshipWizard() {
                 ["Game mode", setup.modeName],
                 ["Questions per game", setup.noOfQuestions],
                 ["Duration", `${setup.durationMinutes} minutes`],
+                ["Game description", setup.description],
+                ...(isPlayAndWin(setup.modeName)
+                  ? [
+                      ["Play and win description", setup.playWinDescription],
+                      ["Product name", setup.productName],
+                      ["Product description", setup.productDescription],
+                    ]
+                  : []),
                 ["Question sets", selected.map(setName).join(", ")],
                 ["Available questions", countsLoading ? "Checking…" : total],
               ].map(([label, value]) => (
                 <div key={String(label)}>
                   <dt>{String(label)}</dt>
-                  <dd>{String(value || "—")}</dd>
+                  <dd>
+                    {/description/i.test(String(label)) ? (
+                      plainRichText(value) ? <RichText value={value} /> : "—"
+                    ) : (
+                      String(value || "—")
+                    )}
+                  </dd>
                 </div>
               ))}
             </dl>
+            {isPlayAndWin(setup.modeName) && !!setup.productImage && (
+              <img
+                className="attachment-preview"
+                src={String(setup.productImage)}
+                alt={`Product image for ${String(setup.productName || "this championship")}`}
+              />
+            )}
             {publishError && (
               <Notice>
                 {publishError}

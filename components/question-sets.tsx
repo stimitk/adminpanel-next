@@ -203,11 +203,11 @@ export function QuestionSets({
             }
             columns={[
               [ACTIONS_COLUMN, "Actions"],
+              ["status", "Status"],
+              ["teacher_code", "Championship Maker ID"],
+              ["teacher_name", "Championship Maker name"],
               ["label_name", "Question set name"],
               ["label_code", "Set ID"],
-              ["teacher_name", "Championship Maker name"],
-              ["teacher_code", "Championship Maker ID"],
-              ["status", "Status"],
             ]}
             render={{
               label_name: (row) => String(row.label_name || "Untitled set"),

@@ -15,6 +15,7 @@ import type { Field, Option } from "../../lib/types";
 import { Notice } from "../ui/notice";
 import { display } from "../ui/form-controls";
 import { Button } from "../ui/button";
+import { ImageAttachment } from "../image-attachment";
 
 export interface StandardFormProps {
   fields: Field[];
@@ -52,6 +53,31 @@ export function StandardForm({
     .join(",");
   const [loadingLookups, setLoadingLookups] = useState(!!sources);
   const [lookupRevision, setLookupRevision] = useState(0);
+  // Current values of fields that other fields depend on through `showWhen`.
+  const watched = new Set(
+    fields.map((f) => f.showWhen?.field).filter((n): n is string => !!n),
+  );
+  const [watchedValues, setWatchedValues] = useState<Record<string, string>>(
+    () =>
+      Object.fromEntries(
+        [...watched].map((name) => [
+          name,
+          String(
+            initial[name] ?? fields.find((f) => f.name === name)?.value ?? "",
+          ),
+        ]),
+      ),
+  );
+  const [blockedImages, setBlockedImages] = useState<Record<string, boolean>>(
+    {},
+  );
+  const isShown = (field: Field) =>
+    !field.showWhen ||
+    watchedValues[field.showWhen.field]?.toLowerCase() ===
+      field.showWhen.value.toLowerCase();
+  const imageBlocked = fields.some(
+    (f) => f.type === "image" && isShown(f) && blockedImages[f.name],
+  );
 
   useEffect(() => {
     if (!sources) {
@@ -114,6 +140,7 @@ export function StandardForm({
     const data = new FormData(event.currentTarget);
     const values: Record<string, unknown> = {};
     fields.forEach((field) => {
+      if (!isShown(field)) return;
       if (field.type === "multiselect")
         values[field.name] = data
           .getAll(field.name)
@@ -131,17 +158,15 @@ export function StandardForm({
     });
 
     for (const field of fields) {
-      if (field.type === "richtext") {
+      if (field.type === "richtext" && isShown(field)) {
         const value = String(values[field.name] || "");
         if (field.required && !plainRichText(value)) {
           setError(`${field.label} is required.`);
-          const editor = event.currentTarget.querySelector<HTMLElement>(
-            '[contenteditable="true"]',
-          );
-          editor?.focus();
+          document.getElementById(`${formId}-${field.name}`)?.focus();
           return;
         }
-        values[field.name] = sanitizeRichText(value);
+        // Store an empty editor as "" rather than leftover markup like "<br>".
+        values[field.name] = plainRichText(value) ? sanitizeRichText(value) : "";
       }
     }
 
@@ -159,7 +184,15 @@ export function StandardForm({
   }
 
   return (
-    <form onSubmit={submit} className="editor-form">
+    <form
+      onSubmit={submit}
+      className="editor-form"
+      onChange={(event) => {
+        const target = event.target as unknown as HTMLSelectElement;
+        if (watched.has(target.name))
+          setWatchedValues((v) => ({ ...v, [target.name]: target.value }));
+      }}
+    >
       {error && <Notice kind="error">{error}</Notice>}
       {success && <Notice kind="success">{success}</Notice>}
       {lookupErrors.length > 0 && (
@@ -181,16 +214,21 @@ export function StandardForm({
           const opts =
             field.options || (field.source ? lookups[field.source] || [] : []);
           const value = initial[field.name] ?? field.value ?? "";
+          // Hidden fields stay mounted so typed values survive switching back,
+          // but are disabled so they are neither validated nor submitted.
+          const hidden = !isShown(field);
           const common = {
             id,
             name: field.name,
             required: field.required,
+            disabled: hidden || undefined,
             "aria-describedby": field.hint ? help : undefined,
           };
           return (
             <div
-              className={`field ${field.type === "textarea" || field.type === "richtext" ? "field-wide" : ""}`}
+              className={`field ${field.type === "textarea" || field.type === "richtext" || field.type === "image" ? "field-wide" : ""}`}
               key={field.name}
+              hidden={hidden}
             >
               <label
                 htmlFor={id}
@@ -203,15 +241,26 @@ export function StandardForm({
                 {field.label}
                 {field.required && <span aria-hidden="true"> *</span>}
               </label>
-              {field.type === "richtext" ? (
+              {field.type === "image" ? (
+                <ImageAttachment
+                  name={field.name}
+                  label={field.label}
+                  initial={String(value)}
+                  disabled={busy || disabled || hidden}
+                  onBlocked={(blocked) =>
+                    setBlockedImages((v) => ({ ...v, [field.name]: blocked }))
+                  }
+                />
+              ) : field.type === "richtext" ? (
                 <RichTextEditor
                   id={id}
                   name={field.name}
                   label={field.label}
                   initial={String(value)}
-                  disabled={busy || disabled}
+                  disabled={busy || disabled || hidden}
                   required={field.required}
                   describedBy={field.hint ? help : undefined}
+                  placeholder={`Write the ${field.label.toLowerCase()}…`}
                 />
               ) : field.type === "textarea" ? (
                 <textarea
@@ -234,7 +283,7 @@ export function StandardForm({
                         : []
                       : String(value)
                   }
-                  disabled={!!field.source && loadingLookups}
+                  disabled={hidden || (!!field.source && loadingLookups)}
                 >
                   {field.type === "select" && (
                     <option value="">
@@ -285,6 +334,7 @@ export function StandardForm({
           disabled={
             disabled ||
             submitDisabled ||
+            imageBlocked ||
             loadingLookups ||
             lookupErrors.length > 0
           }

@@ -25,19 +25,19 @@ export function shuffle<T>(r: Random, list: readonly T[]): T[] {
   }
   return copy;
 }
-// A game mode row; Quick Challenge is always followed by Play & Win.
+// One game mode per championship, named like the create form's options.
 function modesFor(id: number, name: string, subject: string, questions: number): Row[] {
-  const mode = (mode_id: number, mode_name: string) => ({
-    mode_id,
-    mode_name,
-    description: `${subject} questions drawn from the linked sets.`,
-    no_of_question: questions,
-    time_minutes: `00:${String(Math.ceil((questions * 30) / 60)).padStart(2, "0")}:00`,
-  });
-  return name === "Quick Challenge"
-    ? [mode(id, name), mode(1000 + id, "Play & Win")]
-    : [mode(id, name)];
+  return [
+    {
+      mode_id: id,
+      mode_name: name,
+      description: `${subject} questions drawn from the linked sets.`,
+      no_of_question: questions,
+      time_minutes: `00:${String(Math.ceil((questions * 30) / 60)).padStart(2, "0")}:00`,
+    },
+  ];
 }
+const demoProducts = ["Wireless Earbuds", "Smart Watch", "Bookstore Gift Card", "Junior Science Kit"];
 
 const DAY = 86_400_000;
 export const isoDay = (offsetDays: number) =>
@@ -298,6 +298,8 @@ export function generateDemoData(base: {
     const start = i < 5 ? -int(r, 70, 140) : i < 10 ? -int(r, 10, 40) : int(r, 3, 15);
     const end = i < 5 ? start + int(r, 20, 45) : start + int(r, 45, 80);
     const questionsPerGame = pick(r, [10, 10, 15, 20]);
+    const modeName = pick(r, ["Quick Hit", "Quick Hit", "Play and win"]);
+    const product = demoProducts[i % demoProducts.length];
     championships.push({
       champ_id: championships.length + 1,
       champ_name: name,
@@ -312,12 +314,14 @@ export function generateDemoData(base: {
       status: i === 7 ? 0 : 1,
       is_blocked: i === 8,
       total_participants: 0,
-      modes: modesFor(
-        championships.length + 1,
-        pick(r, ["Classic", "Speed Round", "Marathon", "Quick Challenge"]),
-        subject,
-        questionsPerGame,
-      ),
+      ...(modeName === "Play and win"
+        ? {
+            play_win_description: `Top scorers in ${name} win a ${product}.`,
+            product_name: product,
+            product_description: `A ${product.toLowerCase()} for the best players.`,
+          }
+        : {}),
+      modes: modesFor(championships.length + 1, modeName, subject, questionsPerGame),
       label_ids: sets.map((s) => s.label_id),
     });
   });

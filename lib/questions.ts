@@ -27,6 +27,15 @@ export function questionBody(row: Row): Row {
   };
 }
 
+// Created and last-modified times; the API may send either column naming.
+export function questionTimestamps(row: Row): { created: unknown; updated: unknown } {
+  const created = row.created_at ?? row.createdAt ?? null;
+  const updated = row.updated_at ?? row.updatedAt ?? null;
+  // A record touched only at insert has no real update yet.
+  const same = updated && created && new Date(String(updated)).getTime() === new Date(String(created)).getTime();
+  return { created, updated: same ? null : updated };
+}
+
 // Admin moderation flag shared by questions and championships.
 export function isBlocked(row: Row): boolean {
   const value = row.is_blocked;

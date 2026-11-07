@@ -69,18 +69,14 @@ let championships: Row[] = [
     end_time: "18:00:00",
     status: 1,
     total_participants: 3,
+    play_win_description: "Play and win rewards on science questions.",
+    product_name: "Junior Science Kit",
+    product_description: "A hands-on kit with 30 simple experiments.",
     modes: [
       {
         mode_id: 1,
-        mode_name: "Quick Challenge",
+        mode_name: "Play and win",
         description: "Explore the basics of science.",
-        no_of_question: 10,
-        time_minutes: "00:10:00",
-      },
-      {
-        mode_id: 1001,
-        mode_name: "Play & Win",
-        description: "Play and win rewards on science questions.",
         no_of_question: 10,
         time_minutes: "00:10:00",
       },
@@ -181,6 +177,14 @@ const generated = generateDemoData({
 categories = demoCategories.map((c) => ({ ...c }));
 labels = generated.labels;
 questions = generated.questions;
+// Database-style timestamps: every question has a creation time, some an edit.
+const DAY = 86_400_000;
+questions.forEach((q) => {
+  const id = Number(q.question_id);
+  const created = Date.now() - (((id * 7919) % 300) + 45) * DAY - ((id * 37) % 600) * 60_000;
+  q.created_at = new Date(created).toISOString();
+  q.updated_at = id % 3 === 0 ? null : new Date(created + (((id * 13) % 40) + 1) * DAY).toISOString();
+});
 championships = generated.championships;
 masters.teachers = generated.teachers;
 const attempts = generated.attempts;
@@ -603,6 +607,8 @@ export function demoRequest(
       Object.entries(input).map(([k, v]) => [snake(k), v]),
     );
     row.question_id = idFor(questions, "question_id");
+    row.created_at = new Date().toISOString();
+    row.updated_at = null;
     row.label_name = labels.find(
       (l) => String(l.label_id) === String(input.labelId),
     )?.label_name;
@@ -620,6 +626,7 @@ export function demoRequest(
     );
     if ("expectedTimeSeconds" in input)
       row.expected_time_sec = input.expectedTimeSeconds;
+    row.updated_at = new Date().toISOString();
     // labelId: null removes the question from its set; it stays in the bank.
     if ("labelId" in input)
       row.label_name =
@@ -664,6 +671,10 @@ export function demoRequest(
       end_time: input.endTime,
       status: 1,
       total_participants: 0,
+      play_win_description: input.playWinDescription,
+      product_name: input.productName,
+      product_description: input.productDescription,
+      product_image: input.productImage,
       modes: modes.map((m) => ({
         mode_id: id,
         mode_name: m.modeName,
@@ -764,6 +775,10 @@ export function demoRequest(
         startTime: "start_time",
         endTime: "end_time",
         labelIds: "label_ids",
+        playWinDescription: "play_win_description",
+        productName: "product_name",
+        productDescription: "product_description",
+        productImage: "product_image",
       };
       for (const [k, v] of Object.entries(input)) if (keys[k]) row[keys[k]] = v;
       if (input.categoryId !== undefined)
@@ -806,6 +821,7 @@ export function demoRequest(
       if (typeof input.blocked !== "boolean")
         throw new Error("blocked must be true or false.");
       row.is_blocked = input.blocked;
+      row.updated_at = new Date().toISOString();
       data = { updated: true };
     } else if (masters[key]) {
       if (method === "POST") {

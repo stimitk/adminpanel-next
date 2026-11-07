@@ -62,6 +62,7 @@ export function RichTextEditor({
   disabled = false,
   required = false,
   describedBy,
+  placeholder = "Write your question here…",
 }: {
   id: string;
   name: string;
@@ -70,6 +71,7 @@ export function RichTextEditor({
   disabled?: boolean;
   required?: boolean;
   describedBy?: string;
+  placeholder?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const selection = useRef<Range | null>(null);
@@ -192,7 +194,7 @@ export function RichTextEditor({
         aria-describedby={describedBy}
         contentEditable={!disabled}
         suppressContentEditableWarning
-        data-placeholder="Write your question here…"
+        data-placeholder={placeholder}
         onInput={sync}
         onKeyUp={remember}
         onMouseUp={remember}
